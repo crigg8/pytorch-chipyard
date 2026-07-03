@@ -70,7 +70,7 @@ mkdir -p \
 workload_jsons=()
 while IFS= read -r -d '' workload_json; do
   workload_jsons+=("${workload_json}")
-done < <(find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" -maxdepth 1 -type f -name '*.json' ! -name 'cnn-base.json' -print0 | sort -z)
+done < <(find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" -maxdepth 1 -type f -name '*.json' ! -name '*base.json' -print0 | sort -z)
 
 if [[ "${#workload_jsons[@]}" -eq 0 ]]; then
   die "no workload JSON files found under ${PYTORCH_CHIPYARD_WORKLOAD_DIR}; run scripts/package-firemarshal-workload.sh first"

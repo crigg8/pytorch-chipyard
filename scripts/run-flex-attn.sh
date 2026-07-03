@@ -21,10 +21,13 @@ Examples:
 Options:
   --model=LIST         Model list. default expands to opt,pythia.
   --attention=LIST     Attention list. default expands to sdpa,flash,window.
-  --host=LIST          Host list. default expands to rocket,boom.
+  --host=LIST          Host list. default expands to rocket for SDPA and
+                       rocket,boom for flash/window.
   --seq-len=LIST       Sequence length list. default expands to 256,512,768,1024.
-  --artifact-dir=PATH  Output directory. For multiple combinations, PATH is
+  --artifact-dir=PATH  Output directory. For multiple compile combinations, PATH is
                        treated as a root and per-combination subdirectories are used.
+                       Host variants share the same compile artifact and only build
+                       their required core-specific ELF.
   --batch-size=N       Input batch size. Default: 1.
   --seed=N             PyTorch seed. Default: 0.
   -h, --help           Show this help.
@@ -162,22 +165,40 @@ done
 
 pc_prepare_environment
 
-combo_count=$((${#models[@]} * ${#attentions[@]} * ${#hosts[@]} * ${#seq_lens[@]}))
+combo_count=$((${#models[@]} * ${#attentions[@]} * ${#seq_lens[@]}))
+host_arg_default=0
+if [[ -z "$(pc_trim "${host_arg}")" || "$(pc_lower "$(pc_trim "${host_arg}")")" == "default" ]]; then
+  host_arg_default=1
+fi
+
 for model in "${models[@]}"; do
   script_path="$(pc_llm_script "${model}")"
   for attention in "${attentions[@]}"; do
-    for host in "${hosts[@]}"; do
-      core="$(pc_core_for_host "${host}")"
-      for seq_len in "${seq_lens[@]}"; do
-        default_dir="${PC_REPO_ROOT}/examples/${model}/${host}-gemmini/${attention}/seq${seq_len}"
-        suffix="${model}/${host}-gemmini/${attention}/seq${seq_len}"
-        output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${suffix}")"
-        cache_key="flex-${model}-${host}-${attention}-seq${seq_len}"
+    for seq_len in "${seq_lens[@]}"; do
+      suffix="${model}/${backend}/${attention}/seq${seq_len}"
+      storage_suffix="$(pc_artifact_storage_suffix "${suffix}")"
+      default_dir="${PC_REPO_ROOT}/examples/${storage_suffix}"
+      output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${storage_suffix}")"
+      case "${attention}" in
+        sdpa) cache_key="sdpa-${model}-${backend}-seq${seq_len}" ;;
+        *) cache_key="flex-${model}-${attention}-seq${seq_len}" ;;
+      esac
 
-        export LLM_TOKEN_LENGTH="${seq_len}"
-        pc_run_compile "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
-          --batch-size "${batch_size}" --seed "${seed}" --attn "${attention}"
-        pc_build_core_elf "${backend}" "${output_dir}" "${core}"
+      export LLM_TOKEN_LENGTH="${seq_len}"
+      pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
+      pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
+        --batch-size "${batch_size}" --seed "${seed}" --attn "${attention}"
+
+      built_cores=()
+      for host in "${hosts[@]}"; do
+        if [[ "${host_arg_default}" -eq 1 && "${attention}" == "sdpa" && "${host}" == "boom" ]]; then
+          continue
+        fi
+        core="$(pc_core_for_host "${host}")"
+        pc_append_unique built_cores "${core}"
+      done
+      for core in "${built_cores[@]}"; do
+        pc_build_core_elf_once "${backend}" "${output_dir}" "${core}"
       done
     done
   done

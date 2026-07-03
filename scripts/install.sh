@@ -1,4 +1,5 @@
 #!/usr/bin/bash
+set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 export WORKSPACE="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd -P)"
@@ -13,26 +14,27 @@ export TRITON_CHIPYARD_OPT_PATH=$WORKSPACE/triton/build/cmake.linux-x86_64-cpyth
 ############################################################
 
 conda create -n pytorch-chipyard python=3.12 -y
+source ~/anaconda3/etc/profile.d/conda.sh
 conda activate pytorch-chipyard
 conda install -n pytorch-chipyard conda-forge::conda-lock=1.4.0 -y
 conda install -n pytorch-chipyard -c conda-forge gcc_linux-64=13 gxx_linux-64=13 -y
 
-pip install matplotlib pandas
-pip install torch==2.8.0
-pip install torchvision==0.23.0
-pip uninstall triton
+python -m pip install matplotlib pandas
+python -m pip install torch==2.8.0
+python -m pip install torchvision==0.23.0
+python -m pip uninstall -y triton
 
 # triton-chipyard deps
-pip install ninja cmake wheel pytest pybind11 setuptools
+python -m pip install ninja cmake wheel pytest pybind11 setuptools
 
 # triton deps
 pushd triton
-pip install -r python/requirements.txt 
+python -m pip install -r python/requirements.txt 
 popd
 
 # buddy-mlir
 pushd buddy-mlir
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 popd
 
 ############################################################
@@ -59,7 +61,7 @@ pushd triton
 LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include \
   LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib \
   LLVM_SYSPATH=$LLVM_BUILD_DIR \
-  pip install -e .
+  python -m pip install -e .
 popd 
 
 
@@ -81,14 +83,12 @@ cmake -G Ninja .. \
     -DBUDDY_MLIR_ENABLE_PYTHON_PACKAGES=ON \
     -DPython3_EXECUTABLE=$(which python3)
 ninja
-popd -n 2
+popd
+popd
 
 ############################################################
 ## Build PyTorch
 ############################################################
-
-#!/bin/bash
-set -euo pipefail
 
 BLUE="\033[0;34m"; GREEN="\033[0;32m"; RED="\033[0;31m"; NC="\033[0m"
 info(){ echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -96,17 +96,16 @@ ok(){ echo -e "${GREEN}[OK]${NC} $*"; }
 die(){ echo -e "${RED}[ERR]${NC} $*"; exit 1; }
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # 1) source _inductor location
 SOURCE="${PATCHED_INDUCTOR_DIR:-}"
 if [[ -z "$SOURCE" ]]; then
-  if [[ -d "$ROOT_DIR/pytorch/torch/_inductor" ]]; then
-    SOURCE="$ROOT_DIR/pytorch/torch/_inductor"
-  elif [[ -d "$ROOT_DIR/torch/_inductor" ]]; then
-    SOURCE="$ROOT_DIR/torch/_inductor"
-  elif [[ -d "$ROOT_DIR/LLAPI-PyTorch/torch/_inductor" ]]; then
-    SOURCE="$ROOT_DIR/LLAPI-PyTorch/torch/_inductor"
+  if [[ -d "$WORKSPACE/pytorch/torch/_inductor" ]]; then
+    SOURCE="$WORKSPACE/pytorch/torch/_inductor"
+  elif [[ -d "$WORKSPACE/torch/_inductor" ]]; then
+    SOURCE="$WORKSPACE/torch/_inductor"
+  elif [[ -d "$WORKSPACE/LLAPI-PyTorch/torch/_inductor" ]]; then
+    SOURCE="$WORKSPACE/LLAPI-PyTorch/torch/_inductor"
   else
     die "patched _inductor not found. Set PATCHED_INDUCTOR_DIR or place it under ./pytorch/torch/_inductor"
   fi

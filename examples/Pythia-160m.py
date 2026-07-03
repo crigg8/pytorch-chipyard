@@ -10,6 +10,12 @@ from typing import Any
 
 import torch
 import torch._inductor.config as inductor_config
+from llm_artifact_inputs import (
+    dense_sdpa_inputs_from_artifact,
+    dense_sdpa_named_inputs_from_spec,
+    require_named_input_support,
+    sdpa_embedding_input_names,
+)
 from torch.nn.attention.flex_attention import create_block_mask
 from transformers import AutoModelForCausalLM
 from transformers.models.gpt_neox.configuration_gpt_neox import GPTNeoXConfig
@@ -187,14 +193,6 @@ def model_input_tuple(inputs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, ..
     return tuple(inputs[name] for name in MODEL_INPUT_NAMES)
 
 
-def input_entry_names(model_spec: dict[str, Any]) -> list[str]:
-    return [
-        str(entry["name"])
-        for entry in model_spec.get("inputs", [])
-        if isinstance(entry, dict) and "name" in entry
-    ]
-
-
 def block_mask_input_fields(model_spec: dict[str, Any]) -> dict[str, str]:
     fields: dict[str, str] = {}
     for step in model_spec.get("steps", []):
@@ -234,13 +232,14 @@ def flex_named_inputs_from_spec(
     if not field_by_name:
         raise ValueError("compiled artifact does not contain BlockMask inputs")
 
-    non_block_names = [name for name in input_entry_names(model_spec) if name not in field_by_name]
-    if len(non_block_names) != 2:
-        raise ValueError(f"expected two non-BlockMask inputs, got {non_block_names}")
+    input_ids_name, position_ids_name = sdpa_embedding_input_names(
+        model_spec,
+        excluded_names=set(field_by_name),
+    )
 
     named_inputs: dict[str, torch.Tensor] = {
-        non_block_names[0]: inputs["input_ids"],
-        non_block_names[1]: inputs["position_ids"],
+        input_ids_name: inputs["input_ids"],
+        position_ids_name: inputs["position_ids"],
     }
     references: dict[str, torch.Tensor] = {}
     for name, field in field_by_name.items():
@@ -260,29 +259,26 @@ def import_artifact_util(path: Path):
         raise RuntimeError(f"failed to import artifact util: {util_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if not hasattr(module, "read_inputs_bin"):
-        raise RuntimeError(f"{util_path} was generated before read_inputs_bin support; recompile artifacts")
+    require_named_input_support(module, util_path)
     return module
 
 
 def dense_inputs_from_artifact(util, path: Path) -> dict[str, torch.Tensor]:
-    loaded = util.read_inputs_bin(path / "input.bin")
-    if not isinstance(loaded, tuple) or len(loaded) != len(MODEL_INPUT_NAMES):
-        raise TypeError(f"Pythia sdpa artifacts must contain {len(MODEL_INPUT_NAMES)} input tensors")
-    return {name: tensor for name, tensor in zip(MODEL_INPUT_NAMES, loaded)}
+    return dense_sdpa_inputs_from_artifact(util, path)
 
 
 def flex_inputs_from_artifact(util, path: Path) -> dict[str, torch.Tensor]:
     field_by_name = block_mask_input_fields(util.MODEL_SPEC)
     if not field_by_name:
         raise ValueError("compiled artifact does not contain BlockMask inputs")
-    non_block_names = [name for name in input_entry_names(util.MODEL_SPEC) if name not in field_by_name]
-    if len(non_block_names) != 2:
-        raise ValueError(f"expected two non-BlockMask inputs, got {non_block_names}")
+    input_ids_name, position_ids_name = sdpa_embedding_input_names(
+        util.MODEL_SPEC,
+        excluded_names=set(field_by_name),
+    )
 
     named_inputs = util.read_named_inputs_bin(path / "input.bin")
-    input_ids = named_inputs[non_block_names[0]]
-    position_ids = named_inputs[non_block_names[1]]
+    input_ids = named_inputs[input_ids_name]
+    position_ids = named_inputs[position_ids_name]
     return {
         "input_ids": input_ids,
         "attention_mask": torch.ones_like(input_ids),
@@ -342,7 +338,7 @@ def run_compile(args: argparse.Namespace) -> None:
 
     util = import_artifact_util(path)
     if args.attn == "sdpa":
-        input_path = util.write_inputs_bin(model_input_tuple(inputs))
+        input_path = util.write_inputs_bin(dense_sdpa_named_inputs_from_spec(util.MODEL_SPEC, inputs))
     else:
         input_path = util.write_inputs_bin(flex_named_inputs_from_spec(util.MODEL_SPEC, inputs, attention))
     print(f"[compile] seconds={compile_time_s:.3f}")

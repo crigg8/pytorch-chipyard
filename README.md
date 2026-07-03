@@ -14,13 +14,15 @@ git clone https://github.com/JongseoKang/pytorch-chipyard
 cd ./pytorch-chipyard
 git submodule update --init pytorch triton triton_chipyard llvm-project buddy-mlir chipyard
 
+# install others
+bash scripts/install.sh
+
 # install chipyard
+unset -f which
 cd chipyard
 ./build-setup.sh riscv-tools
 cd ..
 
-# install others
-bash scripts/install.sh
 ```
 
 ### Local FPGA host prerequisite

@@ -11,7 +11,7 @@ Usage:
 
 Options:
   --artifact-dir=PATH  Output directory. Default:
-                       examples/gemmini-max-autotune/gemmini
+                       examples/artifact-gemmini-max-autotune/gemmini
   -h, --help           Show this help.
 EOF
 }
@@ -45,9 +45,12 @@ pc_prepare_environment
 export TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE=1
 
 script_path="${PC_REPO_ROOT}/examples/gemmini-max-autotune.py"
-output_dir="${artifact_dir:-${PC_REPO_ROOT}/examples/gemmini-max-autotune/gemmini}"
+suffix="gemmini-max-autotune/gemmini"
+storage_suffix="$(pc_artifact_storage_suffix "${suffix}")"
+output_dir="${artifact_dir:-${PC_REPO_ROOT}/examples/${storage_suffix}}"
+pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
 
-pc_run_compile "${backend}" "${output_dir}" "gemmini-max-autotune" "${script_path}"
-pc_build_core_elf "${backend}" "${output_dir}" 4
+pc_run_compile_once "${backend}" "${output_dir}" "gemmini-max-autotune" "${script_path}"
+pc_build_core_elf_once "${backend}" "${output_dir}" 4
 
 pc_log "done"

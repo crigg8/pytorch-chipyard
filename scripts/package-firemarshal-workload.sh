@@ -20,11 +20,12 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/package-firemarshal-workload.sh [--artifact-root=<path>]
+  bash scripts/package-firemarshal-workload.sh [--artifact-root=<path>] [--no-clean]
 
 Default:
-  Scan examples/ for generated Stage 1 artifacts and package every
-  model-<N>core.elf into FireMarshal and FireSim workload files.
+  Scan artifact-* directories under examples/ for generated Stage 1 artifacts
+  and package every model-<N>core.elf into FireMarshal and FireSim workload
+  files.
 
 Generated files:
   $PYTORCH_CHIPYARD_WORKLOAD_DIR/<workload>.json
@@ -33,6 +34,7 @@ Generated files:
 
 Options:
   --artifact-root=PATH  Root to scan. Default: $WORKSPACE/examples
+  --no-clean            Keep previously generated workload JSONs/overlays.
   --no-chipyard-check   Allow file generation without initialized FireMarshal/FireSim.
   -h, --help            Show this help.
 
@@ -68,6 +70,57 @@ validate_size() {
 
 shell_quote() {
   printf '%q' "$1"
+}
+
+artifact_storage_rel() {
+  local logical_rel="$1"
+  local first rest
+
+  logical_rel="${logical_rel#/}"
+  first="${logical_rel%%/*}"
+  if [[ "${logical_rel}" == "${first}" ]]; then
+    printf 'artifact-%s\n' "${first}"
+  else
+    rest="${logical_rel#*/}"
+    printf 'artifact-%s/%s\n' "${first}" "${rest}"
+  fi
+}
+
+normalize_artifact_rel() {
+  local rel="$1"
+  local first rest
+
+  rel="${rel#./}"
+  first="${rel%%/*}"
+  if [[ "${first}" == artifact-* ]]; then
+    first="${first#artifact-}"
+  fi
+
+  if [[ "${rel}" == */* ]]; then
+    rest="${rel#*/}"
+    printf '%s/%s\n' "${first}" "${rest}"
+  else
+    printf '%s\n' "${first}"
+  fi
+}
+
+existing_artifact_dir_for_rel() {
+  local logical_rel="$1"
+  local storage_dir legacy_dir
+
+  storage_dir="${ARTIFACT_ROOT}/$(artifact_storage_rel "${logical_rel}")"
+  if [[ -d "${storage_dir}" ]]; then
+    printf '%s\n' "${storage_dir}"
+    return 0
+  fi
+
+  legacy_dir="${ARTIFACT_ROOT}/${logical_rel}"
+  if [[ -d "${legacy_dir}" ]]; then
+    printf '%s\n' "${legacy_dir}"
+    return 0
+  fi
+
+  return 1
 }
 
 infer_core_from_elf() {
@@ -112,19 +165,8 @@ workload_kind_for() {
   local artifact_dir="$1"
   local rel first_component
 
-  case "${artifact_dir}" in
-    "${ARTIFACT_ROOT}/"*)
-      rel="${artifact_dir#"${ARTIFACT_ROOT}/"}"
-      first_component="${rel%%/*}"
-      ;;
-    "${WORKSPACE}/examples/"*)
-      rel="${artifact_dir#"${WORKSPACE}/examples/"}"
-      first_component="${rel%%/*}"
-      ;;
-    *)
-      first_component="$(basename "${artifact_dir}")"
-      ;;
-  esac
+  rel="$(artifact_rel_path "${artifact_dir}")"
+  first_component="${rel%%/*}"
 
   case "${first_component}" in
     gpt2 | gpt-neo | opt | pythia)
@@ -158,10 +200,17 @@ guest_root_for() {
   esac
 }
 
-derive_workload_name() {
+artifact_rel_path() {
   local artifact_dir="$1"
-  local core="$2"
-  local rel
+  local rel hint_path
+
+  hint_path="${artifact_dir}/.pytorch-chipyard-workload-rel"
+  if [[ -f "${hint_path}" ]]; then
+    rel="$(head -n 1 "${hint_path}")"
+    [[ "${rel}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "invalid workload hint in ${hint_path}: ${rel}"
+    normalize_artifact_rel "${rel}"
+    return
+  fi
 
   case "${artifact_dir}" in
     "${ARTIFACT_ROOT}/"*)
@@ -175,6 +224,16 @@ derive_workload_name() {
       ;;
   esac
 
+  normalize_artifact_rel "${rel}"
+}
+
+derive_workload_name() {
+  local artifact_dir="$1"
+  local core="$2"
+  local rel
+
+  rel="$(artifact_rel_path "${artifact_dir}")"
+
   rel="${rel//\//-}"
   rel="${rel//_/-}"
   rel="$(printf '%s\n' "${rel}" | sed -E 's/(^|-)seq([0-9]+)(-|$)/\1\2tok\3/g')"
@@ -184,6 +243,93 @@ derive_workload_name() {
     printf '%s\n' "${rel}"
   else
     printf '%s-%score\n' "${rel}" "${core}"
+  fi
+}
+
+derive_packaged_workload_name() {
+  local artifact_dir="$1"
+  local core="$2"
+  local rel model attention seq_len
+
+  rel="$(artifact_rel_path "${artifact_dir}")"
+  if [[ "${rel}" =~ ^(opt|pythia)/gemmini/(sdpa|flash|window)/seq([0-9]+)$ ]]; then
+    model="${BASH_REMATCH[1]}"
+    attention="${BASH_REMATCH[2]}"
+    seq_len="${BASH_REMATCH[3]}"
+    if [[ "${core}" == "1" ]]; then
+      printf '%s-boom-gemmini-%s-%stok-%score\n' "${model}" "${attention}" "${seq_len}" "${core}"
+    else
+      printf '%s-rocket-gemmini-%s-%stok-%score\n' "${model}" "${attention}" "${seq_len}" "${core}"
+    fi
+    return
+  fi
+
+  derive_workload_name "${artifact_dir}" "${core}"
+}
+
+is_shadowed_elf() {
+  local artifact_dir="$1"
+  local core="$2"
+  local rel model host attention seq_len canonical_dir
+
+  rel="$(artifact_rel_path "${artifact_dir}")"
+  if [[ "${rel}" =~ ^(opt|pythia)/gemmini$ ]]; then
+    model="${BASH_REMATCH[1]}"
+    if canonical_dir="$(existing_artifact_dir_for_rel "${model}/gemmini/sdpa/seq256")"; then
+      warn "skipping shadowed SDPA artifact ${artifact_dir}/model-${core}core.elf; using ${canonical_dir}"
+      return 0
+    fi
+    return
+  fi
+
+  if [[ "${rel}" =~ ^(opt|pythia)/(rocket|boom)-gemmini/(sdpa|flash|window)/seq([0-9]+)$ ]]; then
+    model="${BASH_REMATCH[1]}"
+    host="${BASH_REMATCH[2]}"
+    attention="${BASH_REMATCH[3]}"
+    seq_len="${BASH_REMATCH[4]}"
+    if canonical_dir="$(existing_artifact_dir_for_rel "${model}/gemmini/${attention}/seq${seq_len}")"; then
+      warn "skipping shadowed ${host}-gemmini artifact ${artifact_dir}/model-${core}core.elf; using ${canonical_dir}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+clean_generated_workloads() {
+  [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" ]] || return 0
+
+  find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" \
+    -maxdepth 1 \
+    -type f \
+    -name '*.json' \
+    ! -name '*base.json' \
+    -delete
+  find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" \
+    -maxdepth 1 \
+    -type d \
+    -name 'overlay-*' \
+    -exec rm -rf {} +
+}
+
+discover_artifact_elf_paths() {
+  local root="$1"
+  local artifact_dirs=()
+  local dir
+
+  if [[ "$(basename "${root}")" == artifact-* ]]; then
+    find "${root}" -type f -name 'model-*core.elf' -print0 | sort -z
+    return
+  fi
+
+  while IFS= read -r -d '' dir; do
+    artifact_dirs+=("${dir}")
+  done < <(find "${root}" -mindepth 1 -maxdepth 1 -type d -name 'artifact-*' -print0 | sort -z)
+
+  if [[ "${#artifact_dirs[@]}" -gt 0 ]]; then
+    find "${artifact_dirs[@]}" -type f -name 'model-*core.elf' -print0 | sort -z
+  else
+    find "${root}" -type f -name 'model-*core.elf' -print0 | sort -z
   fi
 }
 
@@ -213,8 +359,9 @@ write_workload() {
   local artifact_dir="$1"
   local elf_path="$2"
   local rootfs_size="$3"
+  local workload_name="$4"
 
-  local elf_base core kind guest_root guest_root_rel workload_name
+  local elf_base core kind guest_root guest_root_rel
   local input_path input_base weights_path
   local workload_dir deploy_workload_dir overlay_dir guest_dir runner_path hook_path
   local workload_json deploy_json places cpu_affinity model_command
@@ -235,7 +382,6 @@ write_workload() {
   kind="$(workload_kind_for "${artifact_dir}")"
   guest_root="$(guest_root_for "${kind}")"
   guest_root_rel="${guest_root#/}"
-  workload_name="$(derive_workload_name "${artifact_dir}" "${core}")"
   validate_name "workload name" "${workload_name}"
 
   if [[ -n "${PACKAGED_WORKLOADS[${workload_name}]:-}" ]]; then
@@ -377,6 +523,7 @@ EOF
 
 artifact_root="${WORKSPACE}/examples"
 check_chipyard=1
+clean_workloads=1
 rootfs_size="${PYTORCH_CHIPYARD_FIREMARSHAL_ROOTFS_SIZE:-8GiB}"
 
 while [[ "$#" -gt 0 ]]; do
@@ -388,6 +535,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --artifact-root=*)
       artifact_root="${1#--artifact-root=}"
+      shift
+      ;;
+    --no-clean)
+      clean_workloads=0
       shift
       ;;
     --no-chipyard-check)
@@ -415,12 +566,18 @@ if [[ "${check_chipyard}" -eq 1 ]]; then
     die "FireSim deploy directory not found: ${FIRESIM_DEPLOY_DIR}; initialize ${CHIPYARD_DIR} submodules first"
 fi
 
+mkdir -p "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" "${FIRESIM_WORKLOAD_DIR}"
+if [[ "${clean_workloads}" -eq 1 ]]; then
+  log "cleaning generated FireMarshal workload JSONs/overlays"
+  clean_generated_workloads
+fi
+
 shopt -s nullglob
 
 elf_paths=()
 while IFS= read -r -d '' elf_path; do
   elf_paths+=("${elf_path}")
-done < <(find "${artifact_root}" -type f -name 'model-*core.elf' -print0 | sort -z)
+done < <(discover_artifact_elf_paths "${artifact_root}")
 
 if [[ "${#elf_paths[@]}" -eq 0 ]]; then
   warn "no model-*core.elf files found under ${artifact_root}"
@@ -428,14 +585,24 @@ if [[ "${#elf_paths[@]}" -eq 0 ]]; then
 fi
 
 declare -A PACKAGED_WORKLOADS=()
+packaged_count=0
 
 log "artifact root: ${artifact_root}"
 log "FireMarshal workload dir: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
 log "FireSim workload dir: ${FIRESIM_WORKLOAD_DIR}"
 
 for elf_path in "${elf_paths[@]}"; do
-  write_workload "$(dirname "${elf_path}")" "${elf_path}" "${rootfs_size}"
+  artifact_dir="$(dirname "${elf_path}")"
+  elf_base="$(basename "${elf_path}")"
+  core="$(infer_core_from_elf "${elf_base}")"
+  [[ -n "${core}" ]] || die "could not infer core count from ${elf_path}"
+  if is_shadowed_elf "${artifact_dir}" "${core}"; then
+    continue
+  fi
+  workload_name="$(derive_packaged_workload_name "${artifact_dir}" "${core}")"
+  write_workload "${artifact_dir}" "${elf_path}" "${rootfs_size}" "${workload_name}"
+  packaged_count=$((packaged_count + 1))
 done
 
-log "done: packaged ${#elf_paths[@]} workload(s)"
+log "done: packaged ${packaged_count} workload(s)"
 log "next: bash ${SCRIPT_DIR}/build-firemarshal-images.sh"

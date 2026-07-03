@@ -185,10 +185,16 @@ def first_existing_path(candidates: list[Path]) -> Path:
     raise FileNotFoundError(f"model_spec.json not found. Tried:\n  {formatted}")
 
 
+def artifact_path(model: str, *parts: str) -> Path:
+    return ARTIFACT_ROOT / f"artifact-{model}" / Path(*parts)
+
+
 def model_spec_path(spec: RunSpec) -> Path:
     if spec.model == "AlexNet":
         return first_existing_path(
             [
+                artifact_path("alexnet", "scalar", "model_spec.json"),
+                artifact_path("alexnet", "rocket", "model_spec.json"),
                 ARTIFACT_ROOT / "alexnet" / "scalar" / "model_spec.json",
                 ARTIFACT_ROOT / "alexnet" / "rocket" / "model_spec.json",
                 LEGACY_IR_DIR / "alexnet-rocket" / "model_spec.json",
@@ -197,6 +203,8 @@ def model_spec_path(spec: RunSpec) -> Path:
     if spec.model == "MobileNetV2" and spec.backend == "Gemmini 2":
         return first_existing_path(
             [
+                artifact_path("mobilenetv2", "gemmini", "model_spec.json"),
+                artifact_path("mobilenet", "gemmini", "model_spec.json"),
                 ARTIFACT_ROOT / "mobilenetv2" / "gemmini" / "model_spec.json",
                 ARTIFACT_ROOT / "mobilenet" / "gemmini" / "model_spec.json",
                 LEGACY_IR_DIR / "mobilenet-gemmini" / "model_spec.json",
@@ -205,6 +213,10 @@ def model_spec_path(spec: RunSpec) -> Path:
     if spec.model == "MobileNetV2":
         return first_existing_path(
             [
+                artifact_path("mobilenetv2", "scalar", "model_spec.json"),
+                artifact_path("mobilenetv2", "rocket", "model_spec.json"),
+                artifact_path("mobilenet", "scalar", "model_spec.json"),
+                artifact_path("mobilenet", "rocket", "model_spec.json"),
                 ARTIFACT_ROOT / "mobilenetv2" / "scalar" / "model_spec.json",
                 ARTIFACT_ROOT / "mobilenetv2" / "rocket" / "model_spec.json",
                 ARTIFACT_ROOT / "mobilenet" / "scalar" / "model_spec.json",
@@ -215,6 +227,7 @@ def model_spec_path(spec: RunSpec) -> Path:
     if spec.model == "SqueezeNet" and spec.backend == "Gemmini 2":
         return first_existing_path(
             [
+                artifact_path("squeezenet", "gemmini", "model_spec.json"),
                 ARTIFACT_ROOT / "squeezenet" / "gemmini" / "model_spec.json",
                 LEGACY_IR_DIR / "squeezenet-gemmini" / "model_spec.json",
             ]
@@ -222,6 +235,8 @@ def model_spec_path(spec: RunSpec) -> Path:
     if spec.model == "SqueezeNet":
         return first_existing_path(
             [
+                artifact_path("squeezenet", "scalar", "model_spec.json"),
+                artifact_path("squeezenet", "rocket", "model_spec.json"),
                 ARTIFACT_ROOT / "squeezenet" / "scalar" / "model_spec.json",
                 ARTIFACT_ROOT / "squeezenet" / "rocket" / "model_spec.json",
                 LEGACY_IR_DIR / "squeezenet-rocket" / "model_spec.json",

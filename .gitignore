@@ -204,6 +204,7 @@ cython_debug/
 tempCodeRunnerFile.py
 
 # pytorch-chipyard generated figure inputs/outputs
+artifact-*/
 scripts/.cache/
 scripts/.csv/
 scripts/.logs/

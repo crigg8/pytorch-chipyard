@@ -10,14 +10,16 @@ Usage:
   bash scripts/run-im2col.sh \
     --backend=[gemmini|rvv|scalar|default|comma-separated-list] \
     --model=[alexnet|mobilenetv2|resnet50|squeezenet|default|comma-separated-list] \
+    --core=[4|default|comma-separated-list] \
     --artifact-dir=<path>
 
 Examples:
   bash scripts/run-im2col.sh --backend=gemmini --model=resnet50
 
 Options:
-  --backend=LIST       Backend list. default expands to gemmini,rvv,scalar.
+  --backend=LIST       Backend list. default expands to gemmini.
   --model=LIST         CNN model list. default expands to all CNN workloads.
+  --core=LIST          Core-count list. default expands to 4.
   --artifact-dir=PATH  Output directory. For multiple combinations, PATH is
                        treated as a root and per-combination subdirectories are used.
   --batch-size=N       Input batch size. Default: 1.
@@ -28,6 +30,7 @@ EOF
 
 backend_arg="default"
 model_arg="default"
+core_arg="default"
 artifact_dir=""
 batch_size="${CNN_BATCH_SIZE:-1}"
 seed="${CNN_SEED:-0}"
@@ -50,6 +53,15 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --model=*)
       model_arg="${1#--model=}"
+      shift
+      ;;
+    --core | --cores)
+      [[ "$#" -ge 2 ]] || pc_usage_error "$1 requires a value"
+      core_arg="$2"
+      shift 2
+      ;;
+    --core=* | --cores=*)
+      core_arg="${1#*=}"
       shift
       ;;
     --artifact-dir)
@@ -94,8 +106,10 @@ done
 
 raw_backends=()
 raw_models=()
-pc_split_csv "${backend_arg}" raw_backends gemmini rvv scalar
+raw_cores=()
+pc_split_csv "${backend_arg}" raw_backends gemmini
 pc_split_csv "${model_arg}" raw_models alexnet mobilenetv2 resnet50 squeezenet
+pc_split_csv "${core_arg}" raw_cores 4
 
 backends=()
 for backend in "${raw_backends[@]}"; do
@@ -113,6 +127,12 @@ for model in "${raw_models[@]}"; do
   pc_append_unique models "${normalized_model}"
 done
 
+cores=()
+for core in "${raw_cores[@]}"; do
+  [[ "${core}" =~ ^[0-9]+$ && "${core}" != "0" ]] || pc_die "invalid --core=${core}"
+  pc_append_unique cores "${core}"
+done
+
 pc_prepare_environment
 
 export TORCHINDUCTOR_IM2COL_MM=1
@@ -121,16 +141,19 @@ combo_count=$((${#backends[@]} * ${#models[@]}))
 for model in "${models[@]}"; do
   for backend in "${backends[@]}"; do
     script_path="$(pc_cnn_script "${model}")"
-    default_dir="${PC_REPO_ROOT}/examples/${model}/${backend}-im2col"
-    output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${model}/${backend}-im2col")"
+    suffix="${model}/${backend}-im2col"
+    storage_suffix="$(pc_artifact_storage_suffix "${suffix}")"
+    default_dir="${PC_REPO_ROOT}/examples/${storage_suffix}"
+    output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${storage_suffix}")"
     cache_key="im2col-${model}-${backend}"
+    pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
 
-    pc_run_compile "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
+    pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
       --batch-size "${batch_size}" --seed "${seed}"
 
-    while IFS= read -r core; do
-      pc_build_core_elf "${backend}" "${output_dir}" "${core}"
-    done < <(pc_cores_for_backend "${backend}")
+    for core in "${cores[@]}"; do
+      pc_build_core_elf_once "${backend}" "${output_dir}" "${core}"
+    done
   done
 done
 

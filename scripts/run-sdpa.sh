@@ -99,10 +99,20 @@ pc_prepare_environment
 combo_count="${#models[@]}"
 for model in "${models[@]}"; do
   script_path="$(pc_llm_script "${model}")"
-  default_dir="${PC_REPO_ROOT}/examples/${model}/${backend}"
-  output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${model}/${backend}")"
+  case "${model}" in
+    opt | pythia)
+      suffix="${model}/${backend}/sdpa/seq${seq_len}"
+      ;;
+    *)
+      suffix="${model}/${backend}"
+      ;;
+  esac
+  storage_suffix="$(pc_artifact_storage_suffix "${suffix}")"
+  default_dir="${PC_REPO_ROOT}/examples/${storage_suffix}"
+  output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${storage_suffix}")"
   cache_key="sdpa-${model}-${backend}-seq${seq_len}"
   compile_args=(--batch-size "${batch_size}" --seed "${seed}")
+  pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
 
   case "${model}" in
     opt | pythia)
@@ -111,10 +121,10 @@ for model in "${models[@]}"; do
   esac
 
   export LLM_TOKEN_LENGTH="${seq_len}"
-  pc_run_compile "${backend}" "${output_dir}" "${cache_key}" "${script_path}" "${compile_args[@]}"
+  pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" "${compile_args[@]}"
 
-  pc_build_core_elf "${backend}" "${output_dir}" 2
-  pc_build_core_elf "${backend}" "${output_dir}" 4
+  pc_build_core_elf_once "${backend}" "${output_dir}" 2
+  pc_build_core_elf_once "${backend}" "${output_dir}" 4
 done
 
 pc_log "done"

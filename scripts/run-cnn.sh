@@ -120,15 +120,18 @@ combo_count=$((${#backends[@]} * ${#models[@]}))
 for model in "${models[@]}"; do
   for backend in "${backends[@]}"; do
     script_path="$(pc_cnn_script "${model}")"
-    default_dir="${PC_REPO_ROOT}/examples/${model}/${backend}"
-    output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${model}/${backend}")"
+    suffix="${model}/${backend}"
+    storage_suffix="$(pc_artifact_storage_suffix "${suffix}")"
+    default_dir="${PC_REPO_ROOT}/examples/${storage_suffix}"
+    output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${storage_suffix}")"
     cache_key="cnn-${model}-${backend}"
+    pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
 
-    pc_run_compile "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
+    pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
       --batch-size "${batch_size}" --seed "${seed}"
 
     while IFS= read -r core; do
-      pc_build_core_elf "${backend}" "${output_dir}" "${core}"
+      pc_build_core_elf_once "${backend}" "${output_dir}" "${core}"
     done < <(pc_cores_for_backend "${backend}")
   done
 done

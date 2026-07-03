@@ -287,6 +287,20 @@ pc_combo_artifact_dir() {
   fi
 }
 
+pc_artifact_storage_suffix() {
+  local logical_suffix="$1"
+  local first rest
+
+  logical_suffix="${logical_suffix#/}"
+  first="${logical_suffix%%/*}"
+  if [[ "${logical_suffix}" == "${first}" ]]; then
+    printf 'artifact-%s\n' "${first}"
+  else
+    rest="${logical_suffix#*/}"
+    printf 'artifact-%s/%s\n' "${first}" "${rest}"
+  fi
+}
+
 pc_require_file() {
   local path="$1"
   [[ -f "${path}" ]] || pc_die "required file not found: ${path}"
@@ -298,6 +312,48 @@ pc_require_artifacts() {
   pc_require_file "${artifact_dir}/model_spec.json"
   pc_require_file "${artifact_dir}/input.bin"
   pc_require_file "${artifact_dir}/weights.bin"
+}
+
+pc_write_artifact_workload_hint() {
+  local artifact_dir="$1"
+  local logical_rel="$2"
+
+  mkdir -p "${artifact_dir}"
+  printf '%s\n' "${logical_rel}" > "${artifact_dir}/.pytorch-chipyard-workload-rel"
+}
+
+pc_compile_fingerprint() {
+  local backend="$1"
+  local cache_key="$2"
+  local script_path="$3"
+  shift 3
+
+  printf 'backend=%s\n' "${backend}"
+  printf 'cache_key=%s\n' "${cache_key}"
+  printf 'script_path=%s\n' "${script_path}"
+  printf 'LLM_TOKEN_LENGTH=%s\n' "${LLM_TOKEN_LENGTH:-}"
+  printf 'TORCHINDUCTOR_IM2COL_MM=%s\n' "${TORCHINDUCTOR_IM2COL_MM:-}"
+  printf 'TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE=%s\n' "${TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE:-0}"
+  local arg
+  for arg in "$@"; do
+    printf 'arg=%q\n' "${arg}"
+  done
+}
+
+pc_compile_stamp_path() {
+  local artifact_dir="$1"
+  printf '%s\n' "${artifact_dir}/.pytorch-chipyard-compile-fingerprint"
+}
+
+pc_artifacts_match_fingerprint() {
+  local artifact_dir="$1"
+  local fingerprint="$2"
+  local stamp
+
+  stamp="$(pc_compile_stamp_path "${artifact_dir}")"
+  [[ -f "${stamp}" ]] || return 1
+  pc_require_artifacts "${artifact_dir}"
+  [[ "$(cat "${stamp}")" == "${fingerprint}" ]]
 }
 
 pc_build_core_elf() {
@@ -313,6 +369,57 @@ pc_build_core_elf() {
     pc_require_file "${artifact_dir}/model.elf"
     cp -f model.elf "model-${core}core.elf"
   )
+}
+
+pc_build_stamp_path() {
+  local artifact_dir="$1"
+  local core="$2"
+  printf '%s\n' "${artifact_dir}/.model-${core}core.elf-fingerprint"
+}
+
+pc_build_fingerprint() {
+  local backend="$1"
+  local artifact_dir="$2"
+  local core="$3"
+  local compile_stamp
+
+  compile_stamp="$(pc_compile_stamp_path "${artifact_dir}")"
+  printf 'backend=%s\n' "${backend}"
+  printf 'core=%s\n' "${core}"
+  if [[ -f "${compile_stamp}" ]]; then
+    cat "${compile_stamp}"
+  else
+    printf 'compile_stamp=\n'
+  fi
+}
+
+pc_core_elf_matches_fingerprint() {
+  local artifact_dir="$1"
+  local core="$2"
+  local fingerprint="$3"
+  local elf stamp
+
+  elf="${artifact_dir}/model-${core}core.elf"
+  stamp="$(pc_build_stamp_path "${artifact_dir}" "${core}")"
+  [[ -f "${elf}" && -f "${stamp}" ]] || return 1
+  [[ "$(cat "${stamp}")" == "${fingerprint}" ]]
+}
+
+pc_build_core_elf_once() {
+  local backend="$1"
+  local artifact_dir="$2"
+  local core="$3"
+  local fingerprint stamp
+
+  fingerprint="$(pc_build_fingerprint "${backend}" "${artifact_dir}" "${core}")"
+  if pc_core_elf_matches_fingerprint "${artifact_dir}" "${core}" "${fingerprint}"; then
+    pc_log "reusing ${artifact_dir}/model-${core}core.elf"
+    return
+  fi
+
+  pc_build_core_elf "${backend}" "${artifact_dir}" "${core}"
+  stamp="$(pc_build_stamp_path "${artifact_dir}" "${core}")"
+  printf '%s\n' "${fingerprint}" > "${stamp}"
 }
 
 pc_run_compile() {
@@ -339,4 +446,23 @@ pc_run_compile() {
     python "${script_path}" --compile "$@"
 
   pc_require_artifacts "${artifact_dir}"
+}
+
+pc_run_compile_once() {
+  local backend="$1"
+  local artifact_dir="$2"
+  local cache_key="$3"
+  local script_path="$4"
+  shift 4
+
+  local fingerprint stamp
+  fingerprint="$(pc_compile_fingerprint "${backend}" "${cache_key}" "${script_path}" "$@")"
+  if pc_artifacts_match_fingerprint "${artifact_dir}" "${fingerprint}"; then
+    pc_log "reusing ${script_path} -> ${artifact_dir}"
+    return
+  fi
+
+  pc_run_compile "${backend}" "${artifact_dir}" "${cache_key}" "${script_path}" "$@"
+  stamp="$(pc_compile_stamp_path "${artifact_dir}")"
+  printf '%s\n' "${fingerprint}" > "${stamp}"
 }

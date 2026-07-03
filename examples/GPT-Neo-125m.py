@@ -9,6 +9,11 @@ from pathlib import Path
 
 import torch
 import torch._inductor.config as inductor_config
+from llm_artifact_inputs import (
+    dense_sdpa_inputs_from_artifact,
+    dense_sdpa_named_inputs_from_spec,
+    require_named_input_support,
+)
 from transformers import AutoModelForCausalLM
 from transformers.models.gpt_neo.configuration_gpt_neo import GPTNeoConfig
 
@@ -144,16 +149,12 @@ def import_artifact_util(path: Path):
         raise RuntimeError(f"failed to import artifact util: {util_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if not hasattr(module, "read_inputs_bin"):
-        raise RuntimeError(f"{util_path} was generated before read_inputs_bin support; recompile artifacts")
+    require_named_input_support(module, util_path)
     return module
 
 
 def inputs_from_artifact(util, path: Path) -> dict[str, torch.Tensor]:
-    loaded = util.read_inputs_bin(path / "input.bin")
-    if not isinstance(loaded, tuple) or len(loaded) != len(MODEL_INPUT_NAMES):
-        raise TypeError(f"GPT-Neo artifacts must contain {len(MODEL_INPUT_NAMES)} input tensors")
-    return {name: tensor for name, tensor in zip(MODEL_INPUT_NAMES, loaded)}
+    return dense_sdpa_inputs_from_artifact(util, path)
 
 
 def compare_tensors(golden: torch.Tensor, observed: torch.Tensor) -> bool:
@@ -198,7 +199,7 @@ def run_compile(args: argparse.Namespace) -> None:
     compile_time_s = time.perf_counter() - started_at
 
     util = import_artifact_util(path)
-    input_path = util.write_inputs_bin(model_input_tuple(inputs))
+    input_path = util.write_inputs_bin(dense_sdpa_named_inputs_from_spec(util.MODEL_SPEC, inputs))
     print(f"[compile] seconds={compile_time_s:.3f}")
     print(f"[artifact] input_bin={input_path}")
 
