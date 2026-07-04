@@ -561,9 +561,9 @@ validate_size "${rootfs_size}"
 
 if [[ "${check_chipyard}" -eq 1 ]]; then
   [[ -f "${FIREMARSHAL_DIR}/marshal" ]] || \
-    die "FireMarshal is not initialized at ${FIREMARSHAL_DIR}; initialize ${CHIPYARD_DIR} submodules first"
+    die "FireMarshal is not initialized at ${FIREMARSHAL_DIR}; check CHIPYARD_DIR or FIREMARSHAL_DIR"
   [[ -d "${FIRESIM_DEPLOY_DIR}" ]] || \
-    die "FireSim deploy directory not found: ${FIRESIM_DEPLOY_DIR}; initialize ${CHIPYARD_DIR} submodules first"
+    die "FireSim deploy directory not found: ${FIRESIM_DEPLOY_DIR}; check CHIPYARD_DIR or FIRESIM_DEPLOY_DIR"
 fi
 
 mkdir -p "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" "${FIRESIM_WORKLOAD_DIR}"

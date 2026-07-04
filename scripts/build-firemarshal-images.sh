@@ -52,9 +52,9 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 [[ -f "${FIREMARSHAL_DIR}/marshal" ]] || \
-  die "FireMarshal is not initialized at ${FIREMARSHAL_DIR}; initialize ${CHIPYARD_DIR} first"
+  die "FireMarshal is not initialized at ${FIREMARSHAL_DIR}; check CHIPYARD_DIR or FIREMARSHAL_DIR"
 [[ -d "${FIRESIM_DEPLOY_DIR}" ]] || \
-  die "FireSim deploy directory not found: ${FIRESIM_DEPLOY_DIR}; initialize ${CHIPYARD_DIR} first"
+  die "FireSim deploy directory not found: ${FIRESIM_DEPLOY_DIR}; check CHIPYARD_DIR or FIRESIM_DEPLOY_DIR"
 [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" ]] || \
   die "workload directory not found: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}; run scripts/package-firemarshal-workload.sh first"
 

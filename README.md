@@ -12,33 +12,26 @@ https://pytorch-chipyard.readthedocs.io/en/latest/
 git clone https://github.com/JongseoKang/pytorch-chipyard
 
 cd ./pytorch-chipyard
-git submodule update --init pytorch triton triton_chipyard llvm-project buddy-mlir chipyard
+git submodule update --init pytorch triton triton_chipyard llvm-project buddy-mlir
 
 # install others
 bash scripts/install.sh
-
-# install chipyard
-unset -f which
-cd chipyard
-./build-setup.sh riscv-tools
-cd ..
-
 ```
 
 ### Local FPGA host prerequisite
 
-The installation commands above initialize this repository's compiler stack and
-the repository-local Chipyard tree. They do not configure the Linux host as a
-FireSim FPGA run farm machine. Local FPGA support is a separate machine-level
-prerequisite because it installs privileged helper scripts under
-`/usr/local/bin` and configures device access for the FPGA host.
+The installation commands above initialize this repository's compiler stack.
+They do not install Chipyard/FireSim or configure the Linux host as a FireSim
+FPGA run farm machine. Local FPGA support is a separate machine-level
+prerequisite because it installs privileged helper scripts under `/usr/local/bin`
+and configures device access for the FPGA host.
 
 On the authors' artifact review server, this prerequisite is already handled.
-On a self-managed U250 host, install the FireSim helper scripts from this
-repository's Chipyard tree:
+On a self-managed U250 host, install the FireSim helper scripts from the local
+Chipyard/FireSim checkout that will be used for Stage 2:
 
 ```bash
-cd chipyard/sims/firesim
+cd /path/to/local/chipyard/sims/firesim
 sudo cp deploy/sudo-scripts/* /usr/local/bin
 sudo cp platforms/xilinx_alveo_u250/scripts/* /usr/local/bin
 sudo chmod 755 /usr/local/bin/firesim*
@@ -48,12 +41,12 @@ The host also needs the corresponding FireSim group/sudoers setup described by
 FireSim's local FPGA setup guide, for example allowing the `firesim` group to
 run `/usr/local/bin/firesim-*` without a password. These scripts are
 host-global files, so they are intentionally not installed by
-`scripts/install.sh` or by Chipyard's `./build-setup.sh`.
+`scripts/install.sh`.
 
-This Chipyard checkout pins `sims/firesim` to FireSim commit
+The evaluated host setup used FireSim commit
 `141bff735c9b81a6d82a593310d0ca8be903e9a1`, which is on FireSim `main` after
-the `1.20.1` release. Use the FireSim `latest` local FPGA setup document for
-the rendered guide:
+the `1.20.1` release. Use the FireSim `latest` local FPGA setup document for the
+rendered guide:
 [FireSim Local FPGA Initial Setup](https://docs.fires.im/en/latest/Local-FPGA-Initial-Setup.html).
 For an exact source permalink matching this checkout, see
 [docs/Local-FPGA-Initial-Setup.rst at 141bff735](https://github.com/firesim/firesim/blob/141bff735c9b81a6d82a593310d0ca8be903e9a1/docs/Local-FPGA-Initial-Setup.rst).
@@ -63,31 +56,45 @@ For an exact source permalink matching this checkout, see
 The default path for regenerating the paper figures is:
 
 1. Prepare the FPGA host as described in the installation prerequisite above.
-2. Download the released U250 bitstream artifacts from the GitHub release and
+2. Point `scripts/env.sh` at the local Chipyard/FireSim checkout:
+
+   ```bash
+   export CHIPYARD_DIR=/path/to/local/chipyard
+   # Optional if the host does not use /opt/firesim-db.json:
+   # export PYTORCH_CHIPYARD_FPGA_DB=/path/to/firesim-db.json
+   # Optional if hwdb/build recipes live outside $CHIPYARD_DIR/sims/firesim/deploy:
+   # export FIRESIM_HWDB_PATH=/path/to/config_hwdb.yaml
+   # export FIRESIM_BUILD_RECIPES_PATH=/path/to/config_build_recipes.yaml
+   source scripts/env.sh
+   ```
+
+3. Download the released U250 bitstream artifacts from the GitHub release and
    place them under FireSim's expected build-result tree:
 
    ```text
-   chipyard/sims/firesim/deploy/results-build/
+   $FIRESIM_DEPLOY_DIR/results-build/
    ```
 
    The `config_hwdb.yaml` entries used by FireSim should resolve to the
    downloaded `firesim.tar.gz` files under this directory. If a host stores
    bitstreams somewhere else, update
-   `chipyard/sims/firesim/deploy/config_hwdb.yaml` or point `FIRESIM_HWDB_PATH`
-   at an equivalent hwdb file before running FireSim.
+   `$FIRESIM_HWDB_PATH` before running FireSim.
 
-3. From the repository root, run the full default artifact-generation and FPGA
-   reproduction flow:
+4. From the repository root, run the full default artifact-generation and FPGA
+   reproduction flow. Stage 1 can run in the compiler Docker environment; Stage
+   2 should run on the local Chipyard/FireSim FPGA host.
 
    ```bash
-   # Stage 1: generate the paper-default executable artifacts under examples/
+   # Stage 1: generate the paper-default compiler artifacts under examples/
    bash scripts/run-cnn.sh
    bash scripts/run-sdpa.sh
    bash scripts/run-im2col.sh
    bash scripts/run_gemmini_autotune.sh
    bash scripts/run-flex-attn.sh
 
-   # Stage 2: package, build images, run FireSim, and generate figures
+   # Stage 2: build ELFs, package, build images, run FireSim, and generate figures.
+   # Run these on the local Chipyard/FireSim host after the env setup above.
+   bash scripts/build-chipyard-elves.sh --artifact-root=examples
    bash scripts/package-firemarshal-workload.sh
    bash scripts/build-firemarshal-images.sh
    bash scripts/run-firesim-workloads.sh
@@ -104,16 +111,17 @@ the workload set.
 
 The full workflow is organized in two stages:
 
-1. Compile PyTorch models into Chipyard executable artifacts.
-2. Package and run those artifacts through FireMarshal/FireSim on an FPGA host.
+1. Compile PyTorch models into portable compiler artifacts.
+2. Build those artifacts into RISC-V ELFs, then package and run them through
+   FireMarshal/FireSim on an FPGA host.
 
 Full replication requires an AMD/Xilinx Alveo U250. Some experiments may run on
 an Alveo U280 with matching bitstreams(some experiments require large bitstream), but the full paper configuration assumes U250 bitstreams.
 
-This repository contains the compiler stack and the Chipyard tree, including
-FireMarshal and FireSim. It does not install or configure the FPGA host system.
-The host must already provide a working FPGA runtime environment, including XRT,
-XDMA, Vivado/Vitis-compatible tooling, FireSim database files, and access to the
+This repository contains the compiler stack. It does not install Chipyard,
+FireMarshal, FireSim, or configure the FPGA host system. The host must already
+provide a working FPGA runtime environment, including XRT, XDMA,
+Vivado/Vitis-compatible tooling, FireSim database files, and access to the
 target FPGA device.
 
 Reference host configuration checked on the authors' FPGA server:
@@ -261,16 +269,48 @@ Long sequence lengths are expensive; on the authors' setup, a single sequence-10
 
 ### Stage 2: FPGA simulation
 
-The second stage uses FireMarshal and FireSim to run Stage 1 artifacts on the
-FPGA host. The commands below cover workload packaging and FireMarshal
-build/install, which are prerequisites for the FireSim run step. All paths are
-based on this repository's `chipyard/` submodule, not an external Chipyard
-checkout.
+The second stage uses a local Chipyard/FireSim host setup to build Stage 1
+compiler artifacts into RISC-V ELFs, package those ELFs into FireMarshal
+workloads, build/install FireMarshal images, and run FireSim. The compiler
+artifact repository does not need to contain a `chipyard/` checkout, but the
+host running this stage must provide initialized Chipyard, FireMarshal, and
+FireSim paths.
 
-Before running this stage, make sure Chipyard, FireMarshal, and FireSim are
-initialized as described in the installation section. The FireMarshal image
-build step mounts rootfs images while applying overlays, so the user running the
-script is expected to have `sudo` permission.
+Before running this stage, point `scripts/env.sh` at the local host setup.
+For the standard Chipyard layout, `CHIPYARD_DIR` is the only required user input;
+the other paths are derived by `source scripts/env.sh`:
+
+```bash
+export CHIPYARD_DIR=/path/to/local/chipyard
+# Optional if the host does not use /opt/firesim-db.json:
+# export PYTORCH_CHIPYARD_FPGA_DB=/path/to/firesim-db.json
+# Optional if hwdb/build recipes live outside $CHIPYARD_DIR/sims/firesim/deploy:
+# export FIRESIM_HWDB_PATH=/path/to/config_hwdb.yaml
+# export FIRESIM_BUILD_RECIPES_PATH=/path/to/config_build_recipes.yaml
+source scripts/env.sh
+```
+
+`source scripts/env.sh` is for populating the current shell with derived paths
+such as `CHIPYARD_ENV_PATH`, `FIREMARSHAL_DIR`, `FIRESIM_DIR`,
+`FIRESIM_DEPLOY_DIR`, `FIRESIM_WORKLOAD_DIR`,
+`PYTORCH_CHIPYARD_WORKLOAD_DIR`, and
+`PYTORCH_CHIPYARD_RESULTS_WORKLOAD_DIR`. Run the workflow scripts themselves
+with `bash`; they source `scripts/env.sh` internally and may call `exit` or
+install traps.
+
+The FireMarshal image build step mounts rootfs images while applying overlays,
+so the user running the script is expected to have `sudo` permission.
+
+#### Local Chipyard ELF build
+
+Build `model-<N>core.elf` files from the generated Stage 1 artifacts:
+
+```bash
+bash scripts/build-chipyard-elves.sh --artifact-root=examples
+```
+
+If Stage 1 was run with a custom artifact root, pass that same path with
+`--artifact-root`.
 
 #### FireMarshal workload/package creation
 
@@ -291,13 +331,13 @@ bash scripts/package-firemarshal-workload.sh --artifact-root=<artifact-dir>
 This writes FireMarshal workload JSON/overlays under:
 
 ```text
-chipyard/software/firemarshal/custom_application/pytorch-chipyard-workloads/
+$PYTORCH_CHIPYARD_WORKLOAD_DIR/
 ```
 
 and FireSim workload JSON files under:
 
 ```text
-chipyard/sims/firesim/deploy/workloads/
+$FIRESIM_WORKLOAD_DIR/
 ```
 
 The generated FireMarshal workloads inherit directly from FireMarshal's
@@ -319,7 +359,7 @@ credential alive while images are being built. Internally it runs the equivalent
 of:
 
 ```bash
-cd chipyard/software/firemarshal
+cd "$FIREMARSHAL_DIR"
 ./marshal build <generated-workload-jsons>
 ./marshal install <generated-workload-jsons>
 ```
@@ -327,15 +367,15 @@ cd chipyard/software/firemarshal
 Expected outputs:
 
 ```text
-chipyard/software/firemarshal/images/firechip/<workload>/<workload>-bin
-chipyard/software/firemarshal/images/firechip/<workload>/<workload>.img
-chipyard/sims/firesim/deploy/workloads/<workload>.json
+$FIREMARSHAL_IMAGE_DIR/<workload>/<workload>-bin
+$FIREMARSHAL_IMAGE_DIR/<workload>/<workload>.img
+$FIRESIM_WORKLOAD_DIR/<workload>.json
 ```
 
 This step does not consume FPGA bitstreams directly. Bitstreams are selected in
-the FireSim run stage through `chipyard/sims/firesim/deploy/config_hwdb.yaml`
-and `chipyard/sims/firesim/deploy/config_build_recipes.yaml`, which should point
-to the released U250 bitstream artifacts on the FPGA host.
+the FireSim run stage through `$FIRESIM_HWDB_PATH` and
+`$FIRESIM_BUILD_RECIPES_PATH`, which should point to the released U250 bitstream
+artifacts on the FPGA host.
 
 #### FireSim execution
 
@@ -348,7 +388,7 @@ bash scripts/run-firesim-workloads.sh
 The script discovers workloads from:
 
 ```text
-chipyard/software/firemarshal/custom_application/pytorch-chipyard-workloads/
+$PYTORCH_CHIPYARD_WORKLOAD_DIR/
 ```
 
 For each workload, it generates a per-workload FireSim runtime config under
@@ -392,7 +432,7 @@ PYTORCH_CHIPYARD_FIRESIM_HW_CONFIG_OVERRIDES=resnet50-gemmini-4core=alveo_u250_f
 After each run, FireSim creates a timestamped directory under:
 
 ```text
-chipyard/sims/firesim/deploy/results-workload/
+$PYTORCH_CHIPYARD_RESULTS_WORKLOAD_DIR/
 ```
 
 The script copies the latest result files into timestamp-free workload folders:

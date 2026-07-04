@@ -37,7 +37,12 @@ export TRITON_CHIPYARD_RISCV_MABI="lp64d"
 # export TRITON_CHIPYARD_RISCV_MABI=lp64d
 # export TRITON_CHIPYARD_RISCV_VARCH=vlen:128,elen:64
 
-# Chipyard
+# Local Chipyard/FireSim host paths.
+#
+# For an external host setup, users normally only need to export CHIPYARD_DIR
+# before sourcing this file. The remaining paths are derived from that checkout.
+# Override the derived variables only when the local FireMarshal/FireSim layout
+# differs from the standard Chipyard tree.
 export CHIPYARD_DIR="${CHIPYARD_DIR:-$WORKSPACE/chipyard}"
 export CHIPYARD_ENV_PATH="${CHIPYARD_ENV_PATH:-$CHIPYARD_DIR/env.sh}"
 export FIREMARSHAL_DIR="${FIREMARSHAL_DIR:-$CHIPYARD_DIR/software/firemarshal}"
