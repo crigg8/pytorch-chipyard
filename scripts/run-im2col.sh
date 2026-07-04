@@ -19,9 +19,13 @@ Examples:
 Options:
   --backend=LIST       Backend list. default expands to gemmini.
   --model=LIST         CNN model list. default expands to all CNN workloads.
-  --core=LIST          Core-count list. default expands to 4.
+  --core=LIST          Core-count list to record for the local ELF build step.
+                       Default expands to 4.
   --artifact-dir=PATH  Output directory. For multiple combinations, PATH is
                        treated as a root and per-combination subdirectories are used.
+                       This script only generates compiler artifacts. Build ELF
+                       files later with scripts/build-chipyard-elves.sh on the
+                       local Chipyard/FireSim host.
   --batch-size=N       Input batch size. Default: 1.
   --seed=N             PyTorch seed. Default: 0.
   -h, --help           Show this help.
@@ -147,14 +151,11 @@ for model in "${models[@]}"; do
     output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${storage_suffix}")"
     cache_key="im2col-${model}-${backend}"
     pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
+    pc_write_artifact_build_plan "${output_dir}" "${backend}" "${cores[@]}"
 
     pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
       --batch-size "${batch_size}" --seed "${seed}"
-
-    for core in "${cores[@]}"; do
-      pc_build_core_elf_once "${backend}" "${output_dir}" "${core}"
-    done
   done
 done
 
-pc_log "done"
+pc_log "done; build ELF files on the local Chipyard host with scripts/build-chipyard-elves.sh"

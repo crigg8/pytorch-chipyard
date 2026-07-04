@@ -19,6 +19,9 @@ Options:
   --model=LIST         LLM model list. default expands to all SDPA workloads.
   --artifact-dir=PATH  Output directory. For multiple models, PATH is treated
                        as a root and per-model subdirectories are used.
+                       This script only generates compiler artifacts. Build ELF
+                       files later with scripts/build-chipyard-elves.sh on the
+                       local Chipyard/FireSim host.
   --batch-size=N       Input batch size. Default: 1.
   --seed=N             PyTorch seed. Default: 0.
   -h, --help           Show this help.
@@ -113,6 +116,7 @@ for model in "${models[@]}"; do
   cache_key="sdpa-${model}-${backend}-seq${seq_len}"
   compile_args=(--batch-size "${batch_size}" --seed "${seed}")
   pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
+  pc_write_artifact_build_plan "${output_dir}" "${backend}" 2 4
 
   case "${model}" in
     opt | pythia)
@@ -122,9 +126,6 @@ for model in "${models[@]}"; do
 
   export LLM_TOKEN_LENGTH="${seq_len}"
   pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" "${compile_args[@]}"
-
-  pc_build_core_elf_once "${backend}" "${output_dir}" 2
-  pc_build_core_elf_once "${backend}" "${output_dir}" 4
 done
 
-pc_log "done"
+pc_log "done; build ELF files on the local Chipyard host with scripts/build-chipyard-elves.sh"

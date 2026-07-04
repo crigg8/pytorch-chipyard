@@ -176,13 +176,13 @@ pc_prepare_environment() {
     fi
   fi
 
-  # This file defines WORKSPACE, CHIPYARD_ENV_PATH, LLVM_PROJECT_PATH, and the
-  # default TorchInductor/Triton-Chipyard environment.
+  # This file defines WORKSPACE, compiler paths, backend defaults, and optional
+  # host-side Chipyard/FireSim paths. Compile-only artifact generation must not
+  # require a local Chipyard checkout.
   set +u
   source "${PC_REPO_ROOT}/scripts/env.sh"
   set -u
 
-  [[ -f "${CHIPYARD_ENV_PATH}" ]] || pc_die "missing CHIPYARD_ENV_PATH: ${CHIPYARD_ENV_PATH}"
   [[ -d "${LLVM_PROJECT_PATH}" ]] || pc_die "missing LLVM_PROJECT_PATH: ${LLVM_PROJECT_PATH}"
 }
 
@@ -320,6 +320,21 @@ pc_write_artifact_workload_hint() {
 
   mkdir -p "${artifact_dir}"
   printf '%s\n' "${logical_rel}" > "${artifact_dir}/.pytorch-chipyard-workload-rel"
+}
+
+pc_write_artifact_build_plan() {
+  local artifact_dir="$1"
+  local backend="$2"
+  shift 2
+  local core
+
+  mkdir -p "${artifact_dir}"
+  printf '%s\n' "${backend}" > "${artifact_dir}/.pytorch-chipyard-backend"
+  : > "${artifact_dir}/.pytorch-chipyard-build-cores"
+  for core in "$@"; do
+    [[ "${core}" =~ ^[0-9]+$ && "${core}" != "0" ]] || pc_die "invalid core count '${core}'"
+    printf '%s\n' "${core}" >> "${artifact_dir}/.pytorch-chipyard-build-cores"
+  done
 }
 
 pc_compile_fingerprint() {

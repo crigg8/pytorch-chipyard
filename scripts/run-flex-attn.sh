@@ -26,8 +26,10 @@ Options:
   --seq-len=LIST       Sequence length list. default expands to 256,512,768,1024.
   --artifact-dir=PATH  Output directory. For multiple compile combinations, PATH is
                        treated as a root and per-combination subdirectories are used.
-                       Host variants share the same compile artifact and only build
-                       their required core-specific ELF.
+                       Host variants share the same compile artifact and only record
+                       the core-specific ELF build plan for the local host step.
+                       Build ELF files later with scripts/build-chipyard-elves.sh
+                       on the local Chipyard/FireSim host.
   --batch-size=N       Input batch size. Default: 1.
   --seed=N             PyTorch seed. Default: 0.
   -h, --help           Show this help.
@@ -184,11 +186,6 @@ for model in "${models[@]}"; do
         *) cache_key="flex-${model}-${attention}-seq${seq_len}" ;;
       esac
 
-      export LLM_TOKEN_LENGTH="${seq_len}"
-      pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
-      pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
-        --batch-size "${batch_size}" --seed "${seed}" --attn "${attention}"
-
       built_cores=()
       for host in "${hosts[@]}"; do
         if [[ "${host_arg_default}" -eq 1 && "${attention}" == "sdpa" && "${host}" == "boom" ]]; then
@@ -197,11 +194,14 @@ for model in "${models[@]}"; do
         core="$(pc_core_for_host "${host}")"
         pc_append_unique built_cores "${core}"
       done
-      for core in "${built_cores[@]}"; do
-        pc_build_core_elf_once "${backend}" "${output_dir}" "${core}"
-      done
+
+      export LLM_TOKEN_LENGTH="${seq_len}"
+      pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
+      pc_write_artifact_build_plan "${output_dir}" "${backend}" "${built_cores[@]}"
+      pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
+        --batch-size "${batch_size}" --seed "${seed}" --attn "${attention}"
     done
   done
 done
 
-pc_log "done"
+pc_log "done; build ELF files on the local Chipyard host with scripts/build-chipyard-elves.sh"

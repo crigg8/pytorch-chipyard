@@ -21,6 +21,9 @@ Options:
   --model=LIST         CNN model list. default expands to all CNN workloads.
   --artifact-dir=PATH  Output directory. For multiple combinations, PATH is
                        treated as a root and per-combination subdirectories are used.
+                       This script only generates compiler artifacts. Build ELF
+                       files later with scripts/build-chipyard-elves.sh on the
+                       local Chipyard/FireSim host.
   --batch-size=N       Input batch size. Default: 1.
   --seed=N             PyTorch seed. Default: 0.
   -h, --help           Show this help.
@@ -125,15 +128,16 @@ for model in "${models[@]}"; do
     default_dir="${PC_REPO_ROOT}/examples/${storage_suffix}"
     output_dir="$(pc_combo_artifact_dir "${artifact_dir}" "${combo_count}" "${default_dir}" "${storage_suffix}")"
     cache_key="cnn-${model}-${backend}"
+    build_cores=()
+    while IFS= read -r core; do
+      build_cores+=("${core}")
+    done < <(pc_cores_for_backend "${backend}")
     pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
+    pc_write_artifact_build_plan "${output_dir}" "${backend}" "${build_cores[@]}"
 
     pc_run_compile_once "${backend}" "${output_dir}" "${cache_key}" "${script_path}" \
       --batch-size "${batch_size}" --seed "${seed}"
-
-    while IFS= read -r core; do
-      pc_build_core_elf_once "${backend}" "${output_dir}" "${core}"
-    done < <(pc_cores_for_backend "${backend}")
   done
 done
 
-pc_log "done"
+pc_log "done; build ELF files on the local Chipyard host with scripts/build-chipyard-elves.sh"

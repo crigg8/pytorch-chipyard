@@ -18,6 +18,3 @@
 	path = buddy-mlir
 	url = https://github.com/JongseoKang/LLAPI-buddy-mlir.git
 	branch = pytorch-chipyard
-[submodule "chipyard"]
-	path = chipyard
-	url = https://github.com/ucb-bar/chipyard.git

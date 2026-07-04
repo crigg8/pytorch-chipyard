@@ -12,6 +12,9 @@ Usage:
 Options:
   --artifact-dir=PATH  Output directory. Default:
                        examples/artifact-gemmini-max-autotune/gemmini
+                       This script only generates compiler artifacts. Build ELF
+                       files later with scripts/build-chipyard-elves.sh on the
+                       local Chipyard/FireSim host.
   -h, --help           Show this help.
 EOF
 }
@@ -49,8 +52,8 @@ suffix="gemmini-max-autotune/gemmini"
 storage_suffix="$(pc_artifact_storage_suffix "${suffix}")"
 output_dir="${artifact_dir:-${PC_REPO_ROOT}/examples/${storage_suffix}}"
 pc_write_artifact_workload_hint "${output_dir}" "${suffix}"
+pc_write_artifact_build_plan "${output_dir}" "${backend}" 4
 
 pc_run_compile_once "${backend}" "${output_dir}" "gemmini-max-autotune" "${script_path}"
-pc_build_core_elf_once "${backend}" "${output_dir}" 4
 
-pc_log "done"
+pc_log "done; build ELF files on the local Chipyard host with scripts/build-chipyard-elves.sh"
