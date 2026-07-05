@@ -1,0 +1,35 @@
+.git
+**/.git
+.gitmodules
+
+# Local Python/build artifacts
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.cache/
+*.egg-info/
+
+# Heavy generated compiler/build outputs. The Docker image rebuilds these from
+# the checked-out source using scripts/install.sh.
+llvm-project/build/
+triton/build/
+buddy-mlir/build/
+
+# Buddy-MLIR carries a nested LLVM checkout, but this repository's install path
+# builds against the top-level llvm-project checkout instead.
+buddy-mlir/llvm/
+
+# Local artifact/runtime outputs that should be mounted explicitly when needed.
+examples/artifact-*/
+examples/**/artifact-*/
+scripts/.logs/
+scripts/figures/results-workload/
+.firemarshal/
+.firesim-runtime/
+FIRESIM_RUNS_DIR/
+artifacts/
+
+# Documentation build output is not part of the Stage 1 Docker image.
+docs/_build/

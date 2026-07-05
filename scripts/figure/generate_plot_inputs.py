@@ -11,9 +11,10 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent
+WORKSPACE_DIR = ROOT_DIR.parent
 DEFAULT_RESULTS_DIR = ROOT_DIR / "figures" / "results-workload"
 CSV_DIR = ROOT_DIR / ".csv"
-LOG_DIR = ROOT_DIR / ".logs"
+LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examples" / ".logs"))
 GENERATED_CSVS = [
     "cnn_result.csv",
     "spda_prefill_256.csv",

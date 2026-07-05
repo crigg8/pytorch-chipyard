@@ -26,6 +26,8 @@ apply_plot_style()
 
 FIGURE_DIR = ROOT_DIR / "figures"
 FIGURE_DIR.mkdir(exist_ok=True)
+WORKSPACE_DIR = ROOT_DIR.parent
+LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examples" / ".logs"))
 
 LOG_GLOB = "*gemmini-max-autotune*4core-autotune.log"
 OUT_STEM = "autotune_gemmini_max"
@@ -94,7 +96,7 @@ def _load_log_candidates(path: Path) -> pd.DataFrame:
 
 
 def _load_candidates() -> pd.DataFrame:
-    log_paths = sorted((ROOT_DIR / ".logs").glob(LOG_GLOB))
+    log_paths = sorted(LOG_DIR.glob(LOG_GLOB))
     if not log_paths:
         raise RuntimeError(f"No logs matched {LOG_GLOB}")
 

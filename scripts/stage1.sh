@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  echo "artifact-stage1-common.sh is a helper and must be sourced" >&2
+  echo "stage1.sh is a helper and must be sourced" >&2
   exit 1
 fi
 
@@ -158,7 +158,7 @@ pc_activate_conda_if_available() {
 }
 
 pc_prepare_environment() {
-  local conda_env="${CONDA_ENV_NAME:-${CONDA_ENV:-llapi}}"
+  local conda_env="${CONDA_ENV_NAME:-${PYTORCH_CHIPYARD_CONDA_ENV:-${CONDA_ENV:-pytorch-chipyard}}}"
 
   if [[ "${PYTORCH_CHIPYARD_SKIP_CONDA:-0}" != "1" ]]; then
     if command -v conda >/dev/null 2>&1; then
@@ -188,7 +188,6 @@ pc_prepare_environment() {
 
 pc_common_env() {
   printf '%s\0' \
-    "TRITON_ALWAYS_COMPILE=1" \
     "TORCHINDUCTOR_FORCE_DISABLE_CACHES=1" \
     "TORCHINDUCTOR_MAX_AUTOTUNE=1" \
     "TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS=TRITON" \

@@ -17,7 +17,7 @@ conda create -n pytorch-chipyard python=3.12 -y
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate pytorch-chipyard
 conda install -n pytorch-chipyard conda-forge::conda-lock=1.4.0 -y
-conda install -n pytorch-chipyard -c conda-forge gcc_linux-64=13 gxx_linux-64=13 -y
+conda install -n pytorch-chipyard -c conda-forge gcc_linux-64=13 gxx_linux-64=13 zlib libzlib -y
 
 python -m pip install matplotlib pandas
 python -m pip install torch==2.8.0

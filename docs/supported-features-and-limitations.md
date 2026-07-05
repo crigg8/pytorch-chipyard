@@ -74,3 +74,13 @@ Inductor to be invoked multiple times. The current runner-generation structure
 does not orchestrate multiple separate Inductor graphs as one model artifact.
 
 The documented LLM path is prefill-oriented rather than decoding-oriented.
+
+## Adding a New Hardware Backend
+
+This is future work. We initially tried to add new hardware by attaching a
+precompiled library through Triton's libdevice mechanism. However, Triton's
+libdevice is designed for pointwise operations, especially math functions, and
+its syntax limitations make it impractical to implement all operators required
+for full model execution. For now, a new backend must be added directly to the
+Buddy compiler. Work is also in progress to extend Triton libdevice so it can
+support custom backend integration.

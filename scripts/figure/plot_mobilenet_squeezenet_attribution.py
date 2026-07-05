@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-LOG_DIR = ROOT_DIR / ".logs"
+WORKSPACE_DIR = ROOT_DIR.parent
+LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examples" / ".logs"))
 FIGURE_DIR = ROOT_DIR / "figures"
-ARTIFACT_ROOT = Path(os.environ.get("PYTORCH_CHIPYARD_ARTIFACT_ROOT", ROOT_DIR.parent / "examples"))
-LEGACY_IR_DIR = ROOT_DIR.parent / "triton_chipyard" / "IR"
+ARTIFACT_ROOT = WORKSPACE_DIR / "examples"
+LEGACY_IR_DIR = WORKSPACE_DIR / "triton_chipyard" / "IR"
 
 MPLCONFIGDIR = ROOT_DIR / ".matplotlib"
 XDG_CACHE_HOME = ROOT_DIR / ".cache"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-source "${SCRIPT_DIR}/artifact-stage1-common.sh"
+source "${SCRIPT_DIR}/stage1.sh"
 
 usage() {
   cat <<'EOF'

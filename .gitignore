@@ -229,3 +229,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 /chipyard/
+
+.firesim-runtime/
+FIRESIM_RUNS_DIR/
+examples/.logs/

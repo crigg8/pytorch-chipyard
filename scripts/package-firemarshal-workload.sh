@@ -20,7 +20,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/package-firemarshal-workload.sh [--artifact-root=<path>] [--no-clean]
+  bash scripts/package-firemarshal-workload.sh [--no-clean]
 
 Default:
   Scan artifact-* directories under examples/ for generated Stage 1 artifacts
@@ -33,7 +33,6 @@ Generated files:
   $FIRESIM_WORKLOAD_DIR/<workload>.json
 
 Options:
-  --artifact-root=PATH  Root to scan. Default: $WORKSPACE/examples
   --no-clean            Keep previously generated workload JSONs/overlays.
   --no-chipyard-check   Allow file generation without initialized FireMarshal/FireSim.
   -h, --help            Show this help.
@@ -528,15 +527,6 @@ rootfs_size="${PYTORCH_CHIPYARD_FIREMARSHAL_ROOTFS_SIZE:-8GiB}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
-    --artifact-root)
-      [[ "$#" -ge 2 ]] || die "--artifact-root requires a value"
-      artifact_root="$2"
-      shift 2
-      ;;
-    --artifact-root=*)
-      artifact_root="${1#--artifact-root=}"
-      shift
-      ;;
     --no-clean)
       clean_workloads=0
       shift

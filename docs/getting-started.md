@@ -7,17 +7,21 @@ assumes the versions pinned by this repository.
 # pre-requisite: conda-24.11.3
 git clone https://github.com/JongseoKang/pytorch-chipyard
 
+# source build
 cd pytorch-chipyard
 git submodule update --init pytorch triton triton_chipyard llvm-project buddy-mlir chipyard
 
-cd chipyard
-./build-setup.sh riscv-tools
-cd ..
-
 bash scripts/install.sh
+
+# docker build
+# This may require sudo depending on the host Docker setup. 
+# If Docker is run with sudo, bind-mounted artifacts may need ownership.
+docker build -f docker/stage1.Dockerfile -t pytorch-chipyard:stage1 .
 ```
 
-`scripts/install.sh` sets up the compiler stack used by the examples:
+`scripts/install.sh` builds the compiler stack provided by the
+pytorch-chipyard repository. This stack lowers PyTorch models into RISC-V
+kernels that can later be packaged for Chipyard-based execution.
 
 - Creates a `pytorch-chipyard` conda environment with Python 3.12.
 - Installs PyTorch 2.8.0, torchvision 0.23.0, Triton build dependencies, and
@@ -32,8 +36,7 @@ bash scripts/install.sh
 
 ## Repository Scope
 
-This repository includes the compiler stack and the Chipyard tree, including
-FireMarshal and FireSim sources. It does not install or configure an FPGA host.
+This repository includes only the compiler stack. It does not install chipyard or configure an FPGA host.
 For FPGA execution, the host must already provide the FPGA runtime environment.
 
 External FPGA-side requirements include:
@@ -59,6 +62,6 @@ This project is version-sensitive. The documented path assumes:
 - The custom LLVM checkout included by this repository.
 - The custom Buddy-MLIR checkout included by this repository.
 - The custom Triton-Chipyard backend checkout included by this repository.
-- The pinned Triton and Chipyard submodule commits.
+- The pinned Triton submodule commits.
 
 Other commits may work, but they are outside the documented configuration.

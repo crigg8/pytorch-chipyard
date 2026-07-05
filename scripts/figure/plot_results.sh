@@ -8,7 +8,7 @@ source "${ROOT_DIR}/env.sh"
 RESULTS_DIR="${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR:-$ROOT_DIR/figures/results-workload}"
 FIGURE_DIR="${ROOT_DIR}/figures"
 CSV_DIR="${ROOT_DIR}/.csv"
-LOG_DIR="${ROOT_DIR}/.logs"
+LOG_DIR="${PYTORCH_CHIPYARD_LOG_DIR:-$ROOT_DIR/../examples/.logs}"
 
 log() {
   printf '[plot-results] %s\n' "$*"
@@ -39,8 +39,8 @@ Options:
 Environment:
   PYTHON_BIN                                      Override Python executable
   PYTORCH_CHIPYARD_CONDA_ENV                     Default: ${PYTORCH_CHIPYARD_CONDA_ENV}
-  PYTORCH_CHIPYARD_ARTIFACT_ROOT                 Default: ${PYTORCH_CHIPYARD_ARTIFACT_ROOT}
   PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR   Default result directory
+  PYTORCH_CHIPYARD_LOG_DIR                       Default log directory
 EOF
 }
 
@@ -110,6 +110,7 @@ python_path="$("${PYTHON_CMD[@]}" -c 'import sys; print(sys.executable)')"
 
 log "result input: $RESULTS_DIR"
 log "csv output  : $CSV_DIR"
+log "log output  : $LOG_DIR"
 log "figure out  : $FIGURE_DIR"
 log "python      : $python_path"
 

@@ -2,41 +2,157 @@
 
 This section contains two tutorials:
 
-- Standalone Triton-Chipyard matmul.
+- Standalone Triton-Chipyard matmul example.
 - PyTorch-Chipyard ResNet50 compilation and artifact execution flow.
 
-The examples call the Python entry points directly where that is the clearest
-path. The later packaging and FireSim steps use the repository scripts that
-generate FireMarshal and FireSim workload files.
+To test Triton-Chipyard, install Chipyard and build the target hardware with
+Verilator. To use PyTorch-Chipyard beyond compilation and run generated model
+artifacts, the additional FireSim local setup described in the installation
+section is also required.
 
 ## 2.1 Triton-Chipyard Matmul
 
 The main goal of
 [pytorch-chipyard](https://github.com/JongseoKang/pytorch-chipyard) is PyTorch
 model execution, but Triton-Chipyard can also be used as a standalone Triton
-backend. The full framework installation installs Triton with the out-of-tree
-`triton_chipyard` backend, so the standalone example is available after the
-Section 1 installation flow.
+backend.
 
-To run a standalone Triton kernel, set the Verilator simulator path and run
-`triton_chipyard/example/test_matmul.py`. This example includes both the Triton
-matmul kernel and the Chipyard driver activation:
+To run a standalone Triton kernel, set the Chipyard environment path and the
+Verilator simulator path with `CHIPYARD_ENV_PATH` and
+`CHIPYARD_SIM_VERILATOR_PATH`.
 
-```{literalinclude} ../triton_chipyard/example/test_matmul.py
-:language: python
-:linenos:
-:caption: triton_chipyard/example/test_matmul.py
-:emphasize-lines: 6,110-112
+This tutorial uses the Triton-Chipyard matmul example:
+
+```
+triton_chipyard/example/test_matmul.py
 ```
 
-The important Chipyard-specific lines are:
+Triton-Chipyard follows Triton-Shared's driver activation model. After
+`ChipyardDriver` is set as the active driver, Triton compilation is routed
+through `triton_chipyard` instead of the NVIDIA or AMD backend.
 
-- `from triton.backends.triton_chipyard.driver import ChipyardDriver`
-- `triton.runtime.driver.set_active(ChipyardDriver())`
+```python
+import torch
+import triton
+import triton.language as tl
+from triton.backends.triton_chipyard.driver import ChipyardDriver
 
-The first line imports the out-of-tree backend driver. The second line makes
-Triton route kernel compilation and launch through Triton-Chipyard instead of a
-normal GPU backend.
+triton.runtime.driver.set_active(ChipyardDriver())
+```
+
+The rest of the kernel authoring flow is almost identical to Triton. Write the
+JIT function with the `triton.jit` decorator. Newer Triton APIs that target
+NVIDIA or AMD features, such as `tma.load`, are not available on the Chipyard
+path; use the standard `tl.load` and `tl.store` memory operations.
+
+```python
+@triton.jit
+def matmul_kernel(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    M: tl.constexpr,
+    N: tl.constexpr,
+    K: tl.constexpr,
+    stride_am: tl.constexpr,
+    stride_ak: tl.constexpr,
+    stride_bk: tl.constexpr,
+    stride_bn: tl.constexpr,
+    stride_cm: tl.constexpr,
+    stride_cn: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    pid_m = pid // num_pid_n
+    pid_n = pid % num_pid_n
+
+    offs_m = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_n = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    offs_k = tl.arange(0, BLOCK_SIZE_K)
+
+    a_ptrs = a_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak
+    b_ptrs = b_ptr + offs_k[:, None] * stride_bk + offs_n[None, :] * stride_bn
+
+    acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+    for k_start in range(0, K, BLOCK_SIZE_K):
+        k_mask = k_start + offs_k
+        a = tl.load(
+            a_ptrs,
+            mask=(offs_m[:, None] < M) & (k_mask[None, :] < K),
+            other=0.0,
+        )
+        b = tl.load(
+            b_ptrs,
+            mask=(k_mask[:, None] < K) & (offs_n[None, :] < N),
+            other=0.0,
+        )
+        acc += tl.dot(a, b, input_precision="ieee")
+        a_ptrs += BLOCK_SIZE_K * stride_ak
+        b_ptrs += BLOCK_SIZE_K * stride_bk
+
+    c_ptrs = c_ptr + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
+    c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+    tl.store(c_ptrs, acc, mask=c_mask)
+```
+
+The host function also follows normal Triton conventions, with additional
+Gemmini metadata. The `gemmini_tile_*` metadata is consumed by Buddy-MLIR to
+choose Gemmini matmul tiling. If all values are set to `0`, Buddy-MLIR uses its
+own heuristic.
+
+```python
+def matmul(a, b, block_m, block_n, block_k,
+    gemmini_tile_i, gemmini_tile_j, gemmini_tile_k):
+    c = torch.empty((M, N), device=a.device, dtype=a.dtype)
+
+    def grid(meta):
+        return (
+            triton.cdiv(M, meta["BLOCK_SIZE_M"])
+            * triton.cdiv(N, meta["BLOCK_SIZE_N"]),
+        )
+
+    matmul_kernel[grid](
+        a, b, c, M, N, K,
+        a.stride(0), a.stride(1), b.stride(0),
+        b.stride(1), c.stride(0), c.stride(1),
+        BLOCK_SIZE_M=block_m,
+        BLOCK_SIZE_N=block_n,
+        BLOCK_SIZE_K=block_k,
+        gemmini_tile_i=gemmini_tile_i,
+        gemmini_tile_j=gemmini_tile_j,
+        gemmini_tile_k=gemmini_tile_k,
+    )
+    return c
+```
+
+Call the host function with `torch.Tensor` inputs and metadata matching the
+function signature above. The Verilator result is returned as a `torch.Tensor`,
+which can be compared against eager PyTorch.
+
+```python
+triton.runtime.driver.set_active(ChipyardDriver())
+
+torch.manual_seed(0)
+a = torch.randint(-4, 4, (128, 128), device="cpu", dtype=torch.float32)
+b = torch.randint(-4, 4, (128, 128), device="cpu", dtype=torch.float32)
+
+
+triton_output = matmul(a, b, 32, 32, 32, 0, 0, 0)
+torch_output = torch.matmul(a, b)
+torch.testing.assert_close(triton_output, torch_output, atol=1e-2, rtol=1e-2)
+
+print(f"A shape: {tuple(a.shape)}")
+print(f"B shape: {tuple(b.shape)}")
+print(f"Output shape: {tuple(triton_output.shape)}")
+print("Triton output:")
+print(triton_output)
+print("Torch eager output:")
+print(torch_output)
+```
 
 Run the example with:
 
@@ -46,20 +162,34 @@ cd pytorch-chipyard
 # Edit scripts/env.sh if your local checkout or build paths differ.
 source scripts/env.sh
 
+export CHIPYARD_ENV_PATH=/path/to/chipyard/conda-env
 export CHIPYARD_SIM_VERILATOR_PATH=/path/to/chipyard/verilator/simulator
+# Optional IR dump directory. Unset it to disable dump output.
 export TRITON_CHIPYARD_DUMP_PATH=$PWD/IR/triton-matmul
-export TRITON_CACHE_DIR=/tmp/triton-chipyard-cache/triton-matmul
 
 python triton_chipyard/example/test_matmul.py \
   --block-size-m 128 \
   --block-size-n 128 \
   --block-size-k 128
+
+# Expected output
+A shape: (128, 128)
+B shape: (128, 128)
+Output shape: (128, 128)
+Triton output:
+tensor([...])
+Torch eager output:
+tensor([...])
 ```
 
-`CHIPYARD_SIM_VERILATOR_PATH` is required for this standalone example to execute
-the kernel through the Verilator simulator. If the variable is empty,
-Triton-Chipyard still compiles the kernel path, but the standalone simulator
-launch is skipped.
+The example finishes without an assertion failure when
+`torch.testing.assert_close` passes. The exact tensor values are omitted above.
+
+Verilator is slow, so the run may take minutes to tens of minutes depending on
+the host CPU. `CHIPYARD_SIM_VERILATOR_PATH` is required for this standalone
+example to execute the kernel through the Verilator simulator. If the variable
+is empty, Triton-Chipyard still compiles the kernel into a RISC-V binary, but
+the standalone simulator launch is skipped.
 
 ### Triton-Chipyard Environment Variables
 
@@ -80,73 +210,52 @@ Core path variables:
 | `CHIPYARD_ENV_PATH` | Chipyard environment script sourced by generated build paths. |
 | `CHIPYARD_SIM_VERILATOR_PATH` | Verilator simulator binary used by standalone kernel execution. |
 | `TRITON_CHIPYARD_DUMP_PATH` | Optional dump directory for `tt.mlir`, `ttshared.mlir`, and related lowering files. |
-| `TRITON_CACHE_DIR` | Triton compilation cache directory. |
 
-TorchInductor/PyTorch-Chipyard variables:
-
-| Variable | Purpose |
-| --- | --- |
-| `TORCHINDUCTOR_FORCE_DISABLE_CACHES` | Forces Inductor to regenerate artifacts instead of reusing caches. |
-| `TORCHINDUCTOR_MAX_AUTOTUNE` | Enables Inductor template candidate generation. |
-| `TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS` | Restricts GEMM autotune backends. The documented value is `TRITON`. |
-| `TORCHINDUCTOR_MAX_AUTOTUNE_CONV_BACKENDS` | Restricts convolution autotune backends. The documented value is `TRITON`. |
-| `TORCHINDUCTOR_ENABLE_CHIPYARD_RUNNER` | Enables model artifact generation, including `runner.cpp` and `model_spec.json`. |
-| `TORCHINDUCTOR_STAGE_CHIPYARD_KERNEL_ARTIFACTS` | Stages generated kernel objects into the model artifact directory. |
-| `TORCHINDUCTOR_COMPILE_CHIPYARD_MODEL_RUNNER` | If set to `1`, Inductor tries to call the generated `build.sh`. The direct tutorial leaves it at `0` and calls `build.sh` explicitly. |
-| `TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE` | Enables a larger Gemmini tiling search space. This can make simulation much slower. |
+Gemmini and RVV target variables select the hardware target for
+Triton-Chipyard lowering, so they are also used by the full PyTorch model
+example below. Set only one target at a time. If neither Gemmini nor RVV is
+enabled, Triton-Chipyard lowers to the scalar CPU path, such as a Rocket core.
 
 Gemmini target variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `TRITON_CHIPYARD_USE_GEMMINI` | Enables Gemmini lowering when set to `1`. |
-| `TRITON_CHIPYARD_USE_RVV` | Should be `0` for the Gemmini target. |
-| `TRITON_CHIPYARD_GEMMINI_ADDR_LEN` | Gemmini address length. The default FP32 configuration uses `32`. |
-| `TRITON_CHIPYARD_GEMMINI_DIM` | Gemmini systolic array dimension. The default FP32 configuration uses `8`. |
-| `TRITON_CHIPYARD_GEMMINI_BANK_ROWS` | Scratchpad bank rows. The default FP32 configuration uses `2048`. |
-| `TRITON_CHIPYARD_GEMMINI_ACC_ROWS` | Accumulator rows. The default FP32 configuration uses `2048`. |
-| `TRITON_CHIPYARD_GEMMINI_ELEM_T` | Gemmini element type. The documented default is `f32`. |
-| `TRITON_CHIPYARD_GEMMINI_ACC_T` | Gemmini accumulator type. The documented default is `f32`. |
-| `TRITON_CHIPYARD_RISCV_MARCH` | RISC-V ISA string used by generated builds. Gemmini examples use `rv64imafdc`. |
-| `TRITON_CHIPYARD_RISCV_MABI` | RISC-V ABI string. Gemmini examples use `lp64d`. |
-
-Gemmini example:
-
 ```bash
+# Enable Gemmini lowering.
 export TRITON_CHIPYARD_USE_GEMMINI=1
+# Disable RVV lowering for the Gemmini target.
 export TRITON_CHIPYARD_USE_RVV=0
+# Gemmini address length for the default FP32 configuration.
 export TRITON_CHIPYARD_GEMMINI_ADDR_LEN=32
+# Gemmini systolic array dimension.
 export TRITON_CHIPYARD_GEMMINI_DIM=8
+# Number of rows in each Gemmini scratchpad bank.
 export TRITON_CHIPYARD_GEMMINI_BANK_ROWS=2048
+# Number of rows in the Gemmini accumulator.
 export TRITON_CHIPYARD_GEMMINI_ACC_ROWS=2048
+# Gemmini element type.
 export TRITON_CHIPYARD_GEMMINI_ELEM_T=f32
+# Gemmini accumulator type.
 export TRITON_CHIPYARD_GEMMINI_ACC_T=f32
+# RISC-V ISA string used by generated builds.
 export TRITON_CHIPYARD_RISCV_MARCH=rv64imafdc
+# RISC-V ABI string used by generated builds.
 export TRITON_CHIPYARD_RISCV_MABI=lp64d
 ```
 
 RVV target variables:
-
-| Variable | Purpose |
-| --- | --- |
-| `TRITON_CHIPYARD_USE_GEMMINI` | Should be `0` for RVV. |
-| `TRITON_CHIPYARD_USE_RVV` | Enables RVV lowering when set to `1`. |
-| `TRITON_CHIPYARD_RISCV_MARCH` | RVV examples use `rv64imafdcv_zicsr_zifencei_zvl128b`. |
-| `TRITON_CHIPYARD_RISCV_MABI` | RVV examples use `lp64d`. |
-| `TRITON_CHIPYARD_RISCV_VARCH` | RVV vector architecture string consumed by the backend. The documented value is `vlen:128,elen:64`. |
-
-RVV example:
+Use these variables to compile through the RVV path, such as a Saturn target.
 
 ```bash
+# Disable Gemmini lowering for the RVV target.
 export TRITON_CHIPYARD_USE_GEMMINI=0
+# Enable RVV lowering.
 export TRITON_CHIPYARD_USE_RVV=1
+# RISC-V ISA string for the RVV target.
 export TRITON_CHIPYARD_RISCV_MARCH=rv64imafdcv_zicsr_zifencei_zvl128b
+# RISC-V ABI string used by generated builds.
 export TRITON_CHIPYARD_RISCV_MABI=lp64d
+# RVV vector architecture string consumed by the backend.
 export TRITON_CHIPYARD_RISCV_VARCH=vlen:128,elen:64
 ```
-
-`TRITON_CHIPYARD_RISCV_VARCH` is still used by
-`triton_chipyard/backend/compiler.py`.
 
 FireMarshal and FireSim path variables are described in the ResNet50 flow below.
 
@@ -156,34 +265,171 @@ The PyTorch-Chipyard path starts from a regular PyTorch model example under
 `examples/`. The ResNet50 example configures Triton-Chipyard as the Inductor CPU
 backend, runs `torch.compile`, and writes model-level artifacts.
 
-The complete example is included below:
+The flow is mostly the same as using a normal PyTorch model, with a few
+PyTorch-Chipyard-specific settings. This example runs the `torchvision`
+ResNet50 model. First, set the TorchInductor CPU backend to `triton_chipyard`
+and activate the Triton Chipyard driver so Triton kernels can lower to RISC-V.
 
-```{literalinclude} ../examples/ResNet50.py
-:language: python
-:linenos:
-:caption: examples/ResNet50.py
+The model weights are then made contiguous. This is usually not strictly
+required because most weights are already contiguous, and Triton kernels can
+lower tensor views using PyTorch tensor metadata, but keeping weights contiguous
+makes the generated model artifact simpler. The example image is then loaded
+and preprocessed.
+
+```python
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import torch
+import torch._inductor.config as inductor_config
+from PIL import Image
+from torchvision.models import ResNet50_Weights, resnet50
+
+import triton
+from triton.backends.triton_chipyard.driver import ChipyardDriver
+
+triton.runtime.driver.set_active(ChipyardDriver())
+inductor_config.cpu_backend = "triton_chipyard"
+
+ARTIFACT_DIR = Path(os.environ["PYTORCH_CHIPYARD_DUMP_PATH"]).resolve()
+IMAGE_PATH = Path("examples/img/bus.jpg")
+WEIGHTS = ResNet50_Weights.DEFAULT
+DTYPE = torch.float32
+ATOL = 1e-3
+
+
+def build_model() -> torch.nn.Module:
+    torch.manual_seed(0)
+    model = resnet50(weights=WEIGHTS).to(device="cpu", dtype=DTYPE).eval()
+    for parameter in model.parameters():
+        if not parameter.is_contiguous():
+            parameter.data = parameter.data.contiguous()
+    for buffer in model.buffers():
+        if not buffer.is_contiguous():
+            buffer.data = buffer.data.contiguous()
+    return model
+
+def make_image_input() -> torch.Tensor:
+    image = Image.open(IMAGE_PATH).convert("RGB")
+    tensor = WEIGHTS.transforms()(image).to(dtype=DTYPE)
+    batch = tensor.unsqueeze(0).contiguous(memory_format=torch.channels_last)
+    return torch.as_strided(
+        batch, size=batch.shape, stride=(batch.stride(-1), *batch.stride()[1:])
+    )
 ```
 
-Important parts of the example:
+Model compilation happens when the compiled model is called with an input
+tensor. `torch.compile()` prepares the model for compilation, but the actual
+compile is triggered by `compiled_model(inputs)`. The generated model is
+specialized to the static shape of that input tensor, so a different batch size
+or input shape requires another compiled-model call and may trigger another
+compile.
 
-- `artifact_dir()` reads `PYTORCH_CHIPYARD_DUMP_PATH`, which controls where the
-  generated model artifacts are written.
-- `configure_triton_chipyard()` sets `ChipyardDriver()` as the active Triton
-  driver and sets `inductor_config.cpu_backend = "triton_chipyard"`.
-- `configure_artifact_env()` enables Chipyard runner generation.
-- `run_compile()` builds the torchvision ResNet50 model, calls `torch.compile`,
-  runs the compiled model once, imports the generated `util.py`, and writes
-  `input.bin`.
-- `run_validate()` reads the generated `input.bin` and target-produced
-  `output.bin`, then compares the result against eager PyTorch.
+The compiled model call normally returns an output tensor. In this
+PyTorch-Chipyard artifact-generation flow, do not set the standalone Verilator
+simulator path: without a simulator launch, the Triton-Chipyard JIT path may
+return a placeholder value rather than a meaningful numerical result. This is
+expected, and it keeps model artifact generation within a reasonable time.
 
-Compile ResNet50 for the default FP32 Gemmini configuration:
+Use the following environment variables for the compile step. Keep the
+Triton-Chipyard target hardware variables from the previous section set as
+well.
+
+```bash
+# Force Inductor to regenerate artifacts instead of reusing cached code.
+export TORCHINDUCTOR_FORCE_DISABLE_CACHES=1
+# Restrict Inductor kernel generation and backend selection to Triton.
+export TORCHINDUCTOR_MAX_AUTOTUNE=1
+export TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS=TRITON
+export TORCHINDUCTOR_MAX_AUTOTUNE_CONV_BACKENDS=TRITON
+# Enable generation of runner.cpp, model_spec.json, util.py, and related files.
+export TORCHINDUCTOR_ENABLE_CHIPYARD_RUNNER=1
+# Copy kernel object artifacts under PYTORCH_CHIPYARD_DUMP_PATH/kernels.
+export TORCHINDUCTOR_STAGE_CHIPYARD_KERNEL_ARTIFACTS=1
+# Leave model.elf compilation to the explicit build.sh step below.
+export TORCHINDUCTOR_COMPILE_CHIPYARD_MODEL_RUNNER=0
+# Disable the larger Gemmini autotune search space for full-model runs.
+export TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE=0
+```
+
+The generated artifacts are described after the compile command.
+
+Compile:
+
+```python
+model = build_model()
+inputs = make_image_input()
+
+compiled_model = torch.compile(model, backend="inductor")
+with torch.inference_mode():
+    compiled_model(inputs)
+
+util = import_artifact_util()
+util.write_inputs_bin(inputs)
+```
+
+util.py:
+
+PyTorch-Chipyard generates `util.py` for convenience. It has two main roles.
+First, it packs the input tensor into `input.bin` for the Chipyard run; the
+compile snippet above dynamically imports `util.py` and uses it to create
+`input.bin`. Second, it converts the Chipyard result `output.bin` back into a
+`torch.Tensor` so it can be validated against the golden eager-mode value.
+
+```python
+def import_artifact_util():
+    import importlib.util
+
+    util_path = ARTIFACT_DIR / "util.py"
+    if not util_path.exists():
+        raise FileNotFoundError(f"generated util.py not found: {util_path}")
+    spec = importlib.util.spec_from_file_location("resnet50_artifact_util", util_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to import artifact util: {util_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+```
+
+Validate:
+
+This snippet uses `util.py` to compare the target output with the PyTorch
+eager-mode golden value. `read_inputs_bin` loads the `input.bin` used by the
+Chipyard run as a `torch.Tensor`, and `read_outputs_bin` loads the generated
+`output.bin`. `torch.testing.assert_close` requires matching shapes, so the
+observed tensor is reshaped when it has the same number of elements as the
+golden tensor but a different shape.
+
+The scalar and Gemmini paths have shown error below `1e-3`, while the RVV path
+has shown larger error below `1e-1`. In both cases the semantic result, such as
+top-k classification behavior, remains the same; the difference comes from
+running the same model through different hardware paths.
+
+```python
+util = import_artifact_util()
+inputs = util.read_inputs_bin(ARTIFACT_DIR / "input.bin")
+observed = util.read_outputs_bin(ARTIFACT_DIR / "output.bin")
+
+model = build_model()
+with torch.inference_mode():
+    golden = model(inputs)
+
+if tuple(golden.shape) != tuple(observed.shape):
+    observed = observed.reshape_as(golden)
+
+max_abs_err = (observed.float() - golden.float()).abs().max().item()
+print(f"[validate] max_abs_err={max_abs_err:.6e}")
+torch.testing.assert_close(observed, golden, atol=ATOL, rtol=0)
+```
+
+Compile ResNet50 with the default FP32 Gemmini configuration:
 
 ```bash
 cd pytorch-chipyard
-source scripts/env.sh
+conda activate pytorch-chipyard
 
-export TRITON_ALWAYS_COMPILE=1
 export TORCHINDUCTOR_FORCE_DISABLE_CACHES=1
 export TORCHINDUCTOR_MAX_AUTOTUNE=1
 export TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS=TRITON
@@ -204,20 +450,30 @@ export TRITON_CHIPYARD_GEMMINI_ACC_T=f32
 export TRITON_CHIPYARD_RISCV_MARCH=rv64imafdc
 export TRITON_CHIPYARD_RISCV_MABI=lp64d
 
-# Keep non-Gemmini target settings out of this build if the shell was previously
-# used for an RVV run.
-unset TRITON_CHIPYARD_RISCV_VARCH
-
 export PYTORCH_CHIPYARD_DUMP_PATH=$PWD/examples/resnet50/gemmini
 export TRITON_CHIPYARD_DUMP_PATH=$PYTORCH_CHIPYARD_DUMP_PATH
 export TRITON_CACHE_DIR=/tmp/triton-chipyard-cache/resnet50-gemmini
 
-python examples/ResNet50.py --compile --batch-size 1 --seed 0
+python examples/ResNet50.py --compile
 ```
 
-The compilation step writes `runner.cpp`, `model_spec.json`, `weights.bin`,
-`weights.manifest.json`, `input.bin`, `build.sh`, `util.py`, and staged kernel
-objects into `PYTORCH_CHIPYARD_DUMP_PATH`.
+After the run, the artifact directory has this structure:
+
+```text
+$PYTORCH_CHIPYARD_DUMP_PATH/
+  runner.cpp
+  model_spec.json
+  weights.bin
+  weights.manifest.json
+  input.bin
+  build.sh
+  util.py
+  kernels/
+    <kernel-cache-key>/
+      <kernel-name>.obj
+  tt.mlir
+  ttshared.mlir
+```
 
 `build.sh` is generated but is not called automatically in the command sequence
 above. Build the RISC-V executable explicitly:
@@ -225,7 +481,6 @@ above. Build the RISC-V executable explicitly:
 ```bash
 cd "$PYTORCH_CHIPYARD_DUMP_PATH"
 CHIPYARD_OMP_NUM_THREADS=4 bash ./build.sh
-cp -f model.elf model-4core.elf
 ```
 
 The generated executable expects input, weight, and output file paths:
@@ -236,129 +491,191 @@ The generated executable expects input, weight, and output file paths:
 
 ### FireMarshal Packaging and FireSim Execution
 
-The repository's `scripts/` directory contains the Stage 2 workflow that packages
-generated artifacts into FireMarshal workloads, builds FireMarshal images, runs
-FireSim workloads, and collects result files.
+To run the generated ELF through FireSim, first package it as a FireMarshal
+workload. The example below uses an RVV workload name,
+`resnet50-rvv-4core`. For the Gemmini artifact compiled above, use the same
+layout with `resnet50-gemmini-4core` instead.
 
-The relevant environment variables are set by `scripts/env.sh`:
-
-| Variable | Purpose |
-| --- | --- |
-| `FIREMARSHAL_DIR` | FireMarshal checkout under `chipyard/software/firemarshal`. |
-| `FIREMARSHAL_IMAGE_DIR` | FireMarshal output image directory. |
-| `FIRESIM_DIR` | FireSim checkout under `chipyard/sims/firesim`. |
-| `FIRESIM_DEPLOY_DIR` | FireSim deploy directory. |
-| `FIRESIM_HWDB_PATH` | FireSim hardware database YAML. |
-| `FIRESIM_BUILD_RECIPES_PATH` | FireSim build recipes YAML. |
-| `FIRESIM_WORKLOAD_DIR` | FireSim deploy workload JSON directory. |
-| `PYTORCH_CHIPYARD_WORKLOAD_DIR` | Generated PyTorch-Chipyard FireMarshal workload directory. |
-| `PYTORCH_CHIPYARD_RESULTS_WORKLOAD_DIR` | FireSim `results-workload` directory. |
-| `PYTORCH_CHIPYARD_FPGA_DB` | FPGA database path. Default: `/opt/firesim-db.json`. |
-| `PYTORCH_CHIPYARD_FIRESIM_RUNTIME_DIR` | Directory for generated FireSim runtime YAML files. |
-| `PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR` | Timestamp-free collected result directory used by figure scripts. |
-
-Package the generated `model-<N>core.elf` files into FireMarshal and FireSim
-workload descriptions:
+The FireMarshal workload directory should contain the workload JSON, overlay
+directory, and guest-side runner script. The structure is roughly:
 
 ```bash
+export WORKLOAD=resnet50-rvv-4core
+export GUEST_DIR="$PYTORCH_CHIPYARD_WORKLOAD_DIR/overlay-$WORKLOAD/root/cnn/$WORKLOAD"
+
+mkdir -p "$GUEST_DIR"
+cp "$PYTORCH_CHIPYARD_DUMP_PATH/model.elf" "$GUEST_DIR/model.elf"
+cp "$PYTORCH_CHIPYARD_DUMP_PATH/input.bin" "$GUEST_DIR/input.bin"
+cp "$PYTORCH_CHIPYARD_DUMP_PATH/weights.bin" "$GUEST_DIR/weights.bin"
+```
+
+```text
+$PYTORCH_CHIPYARD_WORKLOAD_DIR/
+  resnet50-rvv-4core.json
+  overlay-resnet50-rvv-4core/
+    firemarshal.sh
+    root/
+      cnn/
+        run-resnet50.sh
+        resnet50-rvv-4core/
+          model.elf
+          input.bin
+          weights.bin
+```
+
+`run-resnet50.sh` is executed inside the guest Linux image. Both the Saturn/RVV
+and Gemmini paths may involve asynchronous target-side work, so the runner sets
+OpenMP scheduling and affinity variables explicitly:
+
+```bash
+#!/bin/bash
+set -u
+set -o pipefail
+
+ulimit -s unlimited
+cd /root/cnn/resnet50-rvv-4core
+
+mount -o remount,rw,noatime / 2>/dev/null || true
+
+export OMP_NUM_THREADS=4
+export OMP_THREAD_LIMIT=4
+export OMP_STACKSIZE=64M
+export OMP_DYNAMIC=false
+export OMP_MAX_ACTIVE_LEVELS=1
+export OMP_NESTED=false
+export OMP_PROC_BIND=close
+export OMP_PLACES="{0},{1},{2},{3}"
+export OMP_SCHEDULE=static
+export OMP_WAIT_POLICY=PASSIVE
+export GOMP_CPU_AFFINITY="0-3"
+export GOMP_SPINCOUNT=0
+export MALLOC_ARENA_MAX=1
+
+chmod +x ./model.elf 2>/dev/null || true
+rm -f output.bin run.log model.log autotune.log
+
+exec >./run.log 2>&1
+echo "[runner] start resnet50-rvv-4core"
+./model.elf input.bin weights.bin output.bin
+rc=$?
+echo "[runner] model_ret=${rc}"
+sync || true
+sleep 5
+exit "${rc}"
+```
+
+The overlay hook can simply call the guest runner:
+
+```bash
+#!/bin/sh
+bash /root/cnn/run-resnet50.sh
+```
+
+Create the FireMarshal workload JSON under
+`$PYTORCH_CHIPYARD_WORKLOAD_DIR/resnet50-rvv-4core.json`.
+FireSim reads the workload JSON from `$FIRESIM_WORKLOAD_DIR`, so write these
+fields as paths relative to `$FIRESIM_WORKLOAD_DIR`. Do not hardcode a relative
+path that only works on one machine; compute the relative path that matches your
+Chipyard/FireMarshal layout.
+
+```json
+{
+  "benchmark_name": "resnet50-rvv-4core",
+  "common_simulation_outputs": [
+    "uartlog"
+  ],
+  "common_bootbinary": "<relative path from $FIRESIM_WORKLOAD_DIR to $FIREMARSHAL_IMAGE_DIR/resnet50-rvv-4core/resnet50-rvv-4core-bin>",
+  "common_rootfs": "<relative path from $FIRESIM_WORKLOAD_DIR to $FIREMARSHAL_IMAGE_DIR/resnet50-rvv-4core/resnet50-rvv-4core.img>",
+  "common_outputs": [
+    "/root/cnn/resnet50-rvv-4core/output.bin",
+    "/root/cnn/resnet50-rvv-4core/run.log",
+    "/root/cnn/resnet50-rvv-4core/model.log",
+    "/root/cnn/resnet50-rvv-4core/autotune.log"
+  ]
+}
+```
+
+Then build and install the FireMarshal image:
+
+```bash
+cd "$FIREMARSHAL_DIR"
+./marshal --workdir "$PYTORCH_CHIPYARD_WORKLOAD_DIR" \
+  build "$PYTORCH_CHIPYARD_WORKLOAD_DIR/resnet50-rvv-4core.json"
+./marshal --workdir "$PYTORCH_CHIPYARD_WORKLOAD_DIR" \
+  install "$PYTORCH_CHIPYARD_WORKLOAD_DIR/resnet50-rvv-4core.json"
+```
+
+This produces the FireMarshal image files referenced by the FireSim workload:
+
+```text
+$FIREMARSHAL_IMAGE_DIR/resnet50-rvv-4core/resnet50-rvv-4core-bin
+$FIREMARSHAL_IMAGE_DIR/resnet50-rvv-4core/resnet50-rvv-4core.img
+$FIRESIM_WORKLOAD_DIR/resnet50-rvv-4core.json
+```
+
+To run the workload through FireSim, prepare a runtime YAML and invoke the
+FireSim manager commands directly. 
+You can start from the default `config_runtime.yaml` and modify only the
+required fields. The important fields are:
+
+```yaml
+target_config:
+    default_hw_config: <FireSim hardware config name for the target bitstream>
+
+workload:
+    workload_name: resnet50-rvv-4core.json
+    terminate_on_completion: yes
+    suffix_tag: resnet50-rvv-4core
+
+run_farm:
+  recipe_arg_overrides:
+    default_simulation_dir: <FireSim run directory>
+    default_fpga_db: <FPGA DB json path>
+    run_farm_hosts_to_use:
+        - <fpga-host-name>: <run-farm-host-spec>
+```
+
+Run the FireSim manager commands with the modified runtime YAML:
+
+```bash
+cd "$FIRESIM_DIR"
+source ./sourceme-manager.sh --skip-ssh-setup
+
+firesim launchrunfarm \
+  -c "$RUNTIME" \
+  -a "$FIRESIM_HWDB_PATH" \
+  -r "$FIRESIM_BUILD_RECIPES_PATH"
+firesim infrasetup \
+  -c "$RUNTIME" \
+  -a "$FIRESIM_HWDB_PATH" \
+  -r "$FIRESIM_BUILD_RECIPES_PATH"
+firesim runworkload \
+  -c "$RUNTIME" \
+  -a "$FIRESIM_HWDB_PATH" \
+  -r "$FIRESIM_BUILD_RECIPES_PATH"
+firesim terminaterunfarm \
+  -c "$RUNTIME" \
+  -a "$FIRESIM_HWDB_PATH" \
+  -r "$FIRESIM_BUILD_RECIPES_PATH" \
+  --forceterminate
+```
+
+After `runworkload`, the logs and output files are generated under the FireSim
+deploy `results-workload` directory. If no custom path is configured, this is
+usually `$FIRESIM_DEPLOY_DIR/results-workload`. Copy the result files back to
+the original PyTorch-Chipyard artifact directory before validation.
+
+```bash
+mkdir -p "$COLLECT_DIR"
+cp "$RESULT_DIR/output.bin" "$COLLECT_DIR/output.bin"
+cp "$RESULT_DIR/model.log" "$COLLECT_DIR/model.log"
+cp "$RESULT_DIR/autotune.log" "$COLLECT_DIR/autotune.log"
+
+cp "$COLLECT_DIR/output.bin" "$PYTORCH_CHIPYARD_DUMP_PATH/output.bin"
+
 cd pytorch-chipyard
-source scripts/env.sh
-
-bash scripts/package-firemarshal-workload.sh --artifact-root=$PWD/examples
-```
-
-For the ResNet50 Gemmini artifact above, this discovers
-`examples/resnet50/gemmini/model-4core.elf` and writes:
-
-```text
-$PYTORCH_CHIPYARD_WORKLOAD_DIR/resnet50-gemmini-4core.json
-$PYTORCH_CHIPYARD_WORKLOAD_DIR/overlay-resnet50-gemmini-4core/
-$FIRESIM_WORKLOAD_DIR/resnet50-gemmini-4core.json
-```
-
-The generated overlay contains the model ELF, `input.bin`, `weights.bin`, and a
-guest runner script. The guest runner executes:
-
-```bash
-./model-4core.elf input.bin weights.bin output.bin
-```
-
-It also configures OpenMP variables such as `OMP_NUM_THREADS`,
-`OMP_THREAD_LIMIT`, `OMP_PLACES`, and `GOMP_CPU_AFFINITY` based on the core count
-encoded in the ELF filename.
-
-Build and install the FireMarshal images:
-
-```bash
-bash scripts/build-firemarshal-images.sh
-```
-
-This runs `./marshal build` and `./marshal install` for the generated workload
-JSON files. FireMarshal image construction may require `sudo` because overlays
-are applied through mounted root filesystems.
-
-The expected image outputs are:
-
-```text
-$FIREMARSHAL_IMAGE_DIR/resnet50-gemmini-4core/resnet50-gemmini-4core-bin
-$FIREMARSHAL_IMAGE_DIR/resnet50-gemmini-4core/resnet50-gemmini-4core.img
-$FIRESIM_WORKLOAD_DIR/resnet50-gemmini-4core.json
-```
-
-Run the workload through FireSim:
-
-```bash
-bash scripts/run-firesim-workloads.sh --workload=resnet50-gemmini-4core
-```
-
-`scripts/run-firesim-workloads.sh` generates a per-workload runtime YAML under
-`$PYTORCH_CHIPYARD_FIRESIM_RUNTIME_DIR`, infers the hardware config from the
-workload name, and runs:
-
-```bash
-firesim launchrunfarm
-firesim infrasetup
-firesim runworkload
-firesim terminaterunfarm
-```
-
-If the inferred hardware config is not the correct bitstream entry for your
-host, override it explicitly:
-
-```bash
-PYTORCH_CHIPYARD_FIRESIM_HW_CONFIG_RESNET50_GEMMINI_4CORE=alveo_u250_firesim_fp8x8_gemmini_rocket_4core_no_nic \
-  bash scripts/run-firesim-workloads.sh --workload=resnet50-gemmini-4core
-```
-
-FPGA host setup, bitstream installation, XRT/XDMA configuration, and the FireSim
-hardware database are not created by these scripts. They must already be set up
-on the FPGA host.
-
-After the run, the script collects the latest result files into:
-
-```text
-$PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR/resnet50-gemmini-4core/model.log
-$PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR/resnet50-gemmini-4core/autotune.log
-$PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR/resnet50-gemmini-4core/output.bin
-```
-
-To collect from an already completed FireSim run without launching a new run:
-
-```bash
-bash scripts/run-firesim-workloads.sh --workload=resnet50-gemmini-4core --collect-only
-```
-
-Copy `output.bin` back to the original artifact directory before validation:
-
-```bash
-cp "$PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR/resnet50-gemmini-4core/output.bin" \
-   "$PYTORCH_CHIPYARD_DUMP_PATH/output.bin"
-```
-
-Then validate the target output against eager PyTorch:
-
-```bash
-cd pytorch-chipyard
+# Use the same artifact directory that was used for compilation, such as
+# $PWD/examples/resnet50/gemmini or $PWD/examples/resnet50/rvv.
 PYTORCH_CHIPYARD_DUMP_PATH=$PWD/examples/resnet50/gemmini \
-  python examples/ResNet50.py --validate --batch-size 1 --seed 0
+  python examples/ResNet50.py --validate
 ```
