@@ -70,6 +70,12 @@ export PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR="${PYTORCH_CHIPYARD_FIGURE_R
 export PYTORCH_CHIPYARD_LOG_DIR="${PYTORCH_CHIPYARD_LOG_DIR:-$WORKSPACE/examples/.logs}"
 export PYTORCH_CHIPYARD_CONDA_ENV="${PYTORCH_CHIPYARD_CONDA_ENV:-pytorch-chipyard}"
 
+# Optional RISC-V compiler override for model.elf builds. Set this when the
+# Chipyard checkout used for FPGA setup should stay fixed, but model.elf should
+# be built with a separate riscv64-unknown-linux-gnu-g++ toolchain.
+export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR="${PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR:-}"
+export PYTORCH_CHIPYARD_RISCV_GXX="${PYTORCH_CHIPYARD_RISCV_GXX:-}"
+
 # FireMarshal reads MARSHAL_* environment variables as config overrides.
 export MARSHAL_FIRESIM_DIR="${MARSHAL_FIRESIM_DIR:-$FIRESIM_DIR}"
 export MARSHAL_MOUNT_DIR="${MARSHAL_MOUNT_DIR:-$WORKSPACE/.firemarshal/disk-mount}"

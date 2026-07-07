@@ -80,6 +80,11 @@ Chipyard version selected for the local FPGA setup. Use a Chipyard/FireSim
 version that matches your FPGA board, Vivado/XRT installation, and bitstream
 setup.
 
+If your Chipyard checkout's `env.sh` selects a different RISC-V GCC, keep
+`CHIPYARD_DIR` pointed at that Chipyard checkout and set
+`PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR` to a separate toolchain root or `bin/`
+directory containing `riscv64-unknown-linux-gnu-g++`.
+
 ## Artifact Replication
 
 Artifact replication has two stages. Stage 1 compiles PyTorch models and
@@ -121,13 +126,14 @@ requires the local FPGA host setup described above.
 # Author review server setting.
 export CHIPYARD_DIR=/home/hongjun/hk_chipyard/chipyard
 export PYTORCH_CHIPYARD_FPGA_DB=/opt/firesim-db0.json
-export CHIPYARD_ENV_PATH=/home/hongjun/hk_chipyard/chipyard-gcc12-env.sh
+# Optional: set only when model.elf builds should use a separate RISC-V GCC.
+# export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR=/path/to/riscv-gcc-12.2.0
 
 # For other hosts, replace the author review Chipyard path above:
 # export CHIPYARD_DIR=/path/to/chipyard
 # For other hosts, replace the author review FPGA DB path above:
 # export PYTORCH_CHIPYARD_FPGA_DB=/path/to/firesim-db.json
-# See scripts/env.sh for advanced Chipyard/FireMarshal/FireSim path overrides.
+# See scripts/env.sh for advanced Chipyard/FireMarshal/FireSim/toolchain overrides.
 
 source scripts/env.sh
 
@@ -135,6 +141,9 @@ source scripts/env.sh
 # sudo chown -R "$USER:$USER" examples
 
 bash scripts/run-stage2.sh
+
+# Generate paper figures from collected FireSim results.
+bash scripts/run-plot.sh
 ```
 
 ## Citation

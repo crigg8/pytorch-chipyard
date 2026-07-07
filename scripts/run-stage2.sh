@@ -23,41 +23,63 @@ Run the Stage 2 host workflow in order:
   2. Package FireMarshal and FireSim workload files.
   3. Build/install FireMarshal images.
   4. Run FireSim workloads and collect results.
-  5. Generate figures.
 
 Options:
-  --chipyard-env=PATH   Local Chipyard env.sh. Passed to build-chipyard-elves.sh.
+  --riscv-toolchain-dir=PATH
+                        RISC-V toolchain root or bin dir containing
+                        riscv64-unknown-linux-gnu-g++.
+  --riscv-gxx=PATH      Exact riscv64-unknown-linux-gnu-g++ path.
   --workload=LIST       Run selected FireSim workload(s). May be repeated.
   --skip-elves          Skip model-<N>core.elf generation.
   --skip-package        Skip FireMarshal workload/package generation.
   --skip-images         Skip FireMarshal image build/install.
   --skip-firesim        Skip FireSim execution/collection.
-  --skip-plot           Skip figure generation.
   -h, --help            Show this help.
 
 Environment:
-  CHIPYARD_DIR must point to the local Chipyard checkout before sourcing
-  scripts/env.sh, unless all derived paths are provided explicitly.
+  CHIPYARD_DIR must point to the local Chipyard checkout. scripts/env.sh
+  derives CHIPYARD_ENV_PATH as $CHIPYARD_DIR/env.sh.
 EOF
 }
 
 chipyard_env_arg=""
+riscv_toolchain_dir_arg=""
+riscv_gxx_arg=""
 workload_args=()
 skip_elves=0
 skip_package=0
 skip_images=0
 skip_firesim=0
-skip_plot=0
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --chipyard-env)
       [[ "$#" -ge 2 ]] || die "--chipyard-env requires a value"
+      log "using deprecated --chipyard-env; prefer CHIPYARD_DIR with optional --riscv-toolchain-dir"
       chipyard_env_arg="$2"
       shift 2
       ;;
     --chipyard-env=*)
+      log "using deprecated --chipyard-env; prefer CHIPYARD_DIR with optional --riscv-toolchain-dir"
       chipyard_env_arg="${1#--chipyard-env=}"
+      shift
+      ;;
+    --riscv-toolchain-dir)
+      [[ "$#" -ge 2 ]] || die "--riscv-toolchain-dir requires a value"
+      riscv_toolchain_dir_arg="$2"
+      shift 2
+      ;;
+    --riscv-toolchain-dir=*)
+      riscv_toolchain_dir_arg="${1#--riscv-toolchain-dir=}"
+      shift
+      ;;
+    --riscv-gxx)
+      [[ "$#" -ge 2 ]] || die "--riscv-gxx requires a value"
+      riscv_gxx_arg="$2"
+      shift 2
+      ;;
+    --riscv-gxx=*)
+      riscv_gxx_arg="${1#--riscv-gxx=}"
       shift
       ;;
     --workload)
@@ -86,7 +108,7 @@ while [[ "$#" -gt 0 ]]; do
       shift
       ;;
     --skip-plot)
-      skip_plot=1
+      log "ignoring deprecated --skip-plot; plotting now lives in scripts/run-plot.sh"
       shift
       ;;
     -h | --help)
@@ -102,6 +124,12 @@ done
 if [[ -n "${chipyard_env_arg}" ]]; then
   export CHIPYARD_ENV_PATH="${chipyard_env_arg}"
 fi
+if [[ -n "${riscv_toolchain_dir_arg}" ]]; then
+  export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR="${riscv_toolchain_dir_arg}"
+fi
+if [[ -n "${riscv_gxx_arg}" ]]; then
+  export PYTORCH_CHIPYARD_RISCV_GXX="${riscv_gxx_arg}"
+fi
 
 set +u
 source "${SCRIPT_DIR}/env.sh"
@@ -109,15 +137,21 @@ set -u
 
 cd "${REPO_ROOT}"
 
-chipyard_env_args=()
+build_elves_args=()
 if [[ -n "${chipyard_env_arg}" ]]; then
-  chipyard_env_args=(--chipyard-env="${chipyard_env_arg}")
+  build_elves_args+=(--chipyard-env="${chipyard_env_arg}")
+fi
+if [[ -n "${riscv_toolchain_dir_arg}" ]]; then
+  build_elves_args+=(--riscv-toolchain-dir="${riscv_toolchain_dir_arg}")
+fi
+if [[ -n "${riscv_gxx_arg}" ]]; then
+  build_elves_args+=(--riscv-gxx="${riscv_gxx_arg}")
 fi
 
 if [[ "${skip_elves}" -eq 0 ]]; then
   log "building ELFs from examples"
   bash "${SCRIPT_DIR}/build-chipyard-elves.sh" \
-    "${chipyard_env_args[@]}"
+    "${build_elves_args[@]}"
 fi
 
 if [[ "${skip_package}" -eq 0 ]]; then
@@ -136,9 +170,4 @@ if [[ "${skip_firesim}" -eq 0 ]]; then
   bash "${SCRIPT_DIR}/run-firesim-workloads.sh" "${firesim_args[@]}"
 fi
 
-if [[ "${skip_plot}" -eq 0 ]]; then
-  log "generating figures"
-  bash "${SCRIPT_DIR}/figure/plot_results.sh"
-fi
-
-log "done"
+log "done; run bash scripts/run-plot.sh to generate figures"
