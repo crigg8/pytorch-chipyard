@@ -13,7 +13,7 @@ section is also required.
 ## 2.1 Triton-Chipyard Matmul
 
 The main goal of
-[pytorch-chipyard](https://github.com/JongseoKang/pytorch-chipyard) is PyTorch
+[pytorch-chipyard](https://github.com/crigg8/pytorch-chipyard) is PyTorch
 model execution, but Triton-Chipyard can also be used as a standalone Triton
 backend.
 

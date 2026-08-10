@@ -1,20 +1,20 @@
 [submodule "pytorch"]
 	path = pytorch
-	url = git@github.com:JongseoKang/pytorch.git
+	url = git@github.com:crigg8/pytorch.git
 	branch = pytorch-chipyard
 [submodule "triton"]
 	path = triton
-	url = git@github.com:JongseoKang/triton.git
+	url = git@github.com:crigg8/triton.git
 	branch = pytorch-chipyard
 [submodule "triton_chipyard"]
 	path = triton_chipyard
-	url = https://github.com/JongseoKang/triton-chipyard.git
+	url = https://github.com/crigg8/triton-chipyard.git
 	branch = pytorch-chipyard
 [submodule "llvm-project"]
 	path = llvm-project
-	url = git@github.com:JongseoKang/llvm-project.git
+	url = git@github.com:crigg8/llvm-project.git
 	branch = pytorch-chipyard
 [submodule "buddy-mlir"]
 	path = buddy-mlir
-	url = https://github.com/JongseoKang/LLAPI-buddy-mlir.git
+	url = https://github.com/crigg8/LLAPI-buddy-mlir.git
 	branch = pytorch-chipyard

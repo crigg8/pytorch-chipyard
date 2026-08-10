@@ -5,7 +5,7 @@ assumes the versions pinned by this repository.
 
 ```bash
 # pre-requisite: conda-24.11.3
-git clone https://github.com/JongseoKang/pytorch-chipyard
+git clone https://github.com/crigg8/pytorch-chipyard.git
 
 # source build
 cd pytorch-chipyard
