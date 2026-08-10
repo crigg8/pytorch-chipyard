@@ -17,6 +17,7 @@ CSV_DIR = ROOT_DIR / ".csv"
 LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examples" / ".logs"))
 GENERATED_CSVS = [
     "cnn_result.csv",
+    "alias_first_ablation.csv",
     "spda_prefill_256.csv",
     "flex_prefill.csv",
     "flash_window_core_ratio.csv",
@@ -32,7 +33,14 @@ CNN_MODEL_ALIASES = {
     "resnet50": "ResNet",
     "squeezenet": "SqueezeNet",
 }
-LLM_MODELS = {"gpt2", "gpt-neo", "opt", "pythia"}
+CNN_ALIAS_FIRST_MODEL_ORDER = [
+    ("resnet50", {"resnet", "resnet50"}),
+    ("alexnet", {"alexnet"}),
+    ("mobilenetv2", {"mobilenet", "mobilenetv2"}),
+    ("squeezenet", {"squeezenet"}),
+]
+LLM_MODEL_ORDER = ["opt", "pythia", "gpt2", "gpt-neo"]
+LLM_MODELS = set(LLM_MODEL_ORDER)
 MODEL_PREFIXES = sorted(
     list(CNN_MODEL_ALIASES) + list(LLM_MODELS),
     key=len,
@@ -81,11 +89,13 @@ def parse_model_log(path: Path) -> tuple[float, int]:
 
 def parse_workload_name(workload: str) -> tuple[str, tuple[str, ...], int, int | None]:
     workload = workload.lower()
-    core_match = re.search(r"(?:^|-)(\d+)core$", workload)
+    core_match = re.search(r"(?:^|-)(\d+)core(?:-|$)", workload)
     if core_match is None:
         raise ValueError(f"could not infer core count from workload name: {workload}")
     core = int(core_match.group(1))
-    stem = workload[: core_match.start()].rstrip("-")
+    stem = (
+        workload[: core_match.start()] + "-" + workload[core_match.end() :]
+    ).strip("-")
 
     if stem.startswith("gemmini-max-autotune"):
         tags = tuple(part for part in stem.split("-") if part)
@@ -264,6 +274,8 @@ def write_cnn_result_csv(runs: list[WorkloadRun]) -> Path:
     for run in runs:
         if not run.is_cnn:
             continue
+        if has_tag(run, "alias") and has_tag(run, "first"):
+            continue
         model = CNN_MODEL_ALIASES[run.model]
         variant = "im2col" if has_tag(run, "im2col") else "baseline"
         device_column = cnn_device_and_column(run)
@@ -274,6 +286,78 @@ def write_cnn_result_csv(runs: list[WorkloadRun]) -> Path:
 
     path = CSV_DIR / "cnn_result.csv"
     write_rows(path, columns, list(row_map.values()))
+    return path
+
+
+def write_alias_first_ablation_csv(runs: list[WorkloadRun]) -> Path:
+    columns = ["model", "off_cycles", "on_cycles", "speedup"]
+    rows: list[dict[str, str]] = []
+
+    for model, model_names in CNN_ALIAS_FIRST_MODEL_ORDER:
+        off_run = best_run(
+            runs,
+            lambda item, model_names=model_names: item.model in model_names
+            and item.core == 4
+            and all(
+                has_tag(item, tag)
+                for tag in ["gemmini", "alias", "first", "off"]
+            ),
+        )
+        on_run = best_run(
+            runs,
+            lambda item, model_names=model_names: item.model in model_names
+            and item.core == 4
+            and set(item.tags) == {"gemmini"},
+        )
+        rows.append(
+            {
+                "model": model,
+                "off_cycles": f"{off_run.avg_cycles:.0f}" if off_run else "",
+                "on_cycles": f"{on_run.avg_cycles:.0f}" if on_run else "",
+                "speedup": (
+                    f"{off_run.avg_cycles / on_run.avg_cycles:.6f}"
+                    if off_run and on_run and on_run.avg_cycles > 0
+                    else ""
+                ),
+            }
+        )
+
+    for model in LLM_MODEL_ORDER:
+        off_run = best_run(
+            runs,
+            lambda item, model=model: item.model == model
+            and item.tokens == 256
+            and item.core == 4
+            and all(
+                has_tag(item, tag)
+                for tag in ["gemmini", "sdpa", "alias", "first", "off"]
+            ),
+        )
+        on_run = best_run(
+            runs,
+            lambda item, model=model: item.model == model
+            and item.tokens == 256
+            and item.core == 4
+            and all(
+                has_tag(item, tag)
+                for tag in ["gemmini", "sdpa", "alias", "first", "on"]
+            ),
+        )
+        rows.append(
+            {
+                "model": model,
+                "off_cycles": f"{off_run.avg_cycles:.0f}" if off_run else "",
+                "on_cycles": f"{on_run.avg_cycles:.0f}" if on_run else "",
+                "speedup": (
+                    f"{off_run.avg_cycles / on_run.avg_cycles:.6f}"
+                    if off_run and on_run and on_run.avg_cycles > 0
+                    else ""
+                ),
+            }
+        )
+
+    path = CSV_DIR / "alias_first_ablation.csv"
+    write_rows(path, columns, rows)
     return path
 
 
@@ -302,6 +386,7 @@ def write_sdpa_csv(runs: list[WorkloadRun]) -> Path:
                 lambda item, model=model, core=core: item.model == model
                 and item.tokens in {None, 256}
                 and item.core == core
+                and not (has_tag(item, "alias") and has_tag(item, "first"))
                 and (has_tag(item, "sdpa") or not any(tag in item.tags for tag in ["flash", "window"])),
             )
             if run is None:
@@ -496,7 +581,9 @@ def write_im2col_site_csv(runs: list[WorkloadRun]) -> Path:
     rows: list[dict[str, str]] = []
 
     for model_label, model_names, labels in configs:
-        direct = find_cnn_run(runs, model_names, {"gemmini"}, {"im2col"}, core=4)
+        direct = find_cnn_run(
+            runs, model_names, {"gemmini"}, {"im2col", "alias"}, core=4
+        )
         im2col = find_cnn_run(runs, model_names, {"gemmini", "im2col"}, core=4)
         if direct is None or im2col is None:
             continue
@@ -568,6 +655,7 @@ def main() -> None:
     prepare_compat_logs(runs)
     generated = [
         write_cnn_result_csv(runs),
+        write_alias_first_ablation_csv(runs),
         write_sdpa_csv(runs),
         write_flex_prefill_csv(runs),
         write_flash_window_ratio_csv(runs),

@@ -336,6 +336,15 @@ pc_write_artifact_build_plan() {
   done
 }
 
+pc_file_sha256() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${path}" | awk '{print $1}'
+  else
+    shasum -a 256 "${path}" | awk '{print $1}'
+  fi
+}
+
 pc_compile_fingerprint() {
   local backend="$1"
   local cache_key="$2"
@@ -345,9 +354,73 @@ pc_compile_fingerprint() {
   printf 'backend=%s\n' "${backend}"
   printf 'cache_key=%s\n' "${cache_key}"
   printf 'script_path=%s\n' "${script_path}"
+  printf 'script_sha256=%s\n' "$(pc_file_sha256 "${script_path}")"
+  local runner_generator="${PC_REPO_ROOT}/pytorch/torch/_inductor/codegen/chipyard/chipyard_wrapper.py"
+  if [[ -f "${runner_generator}" ]]; then
+    printf 'chipyard_runner_generator_sha256=%s\n' "$(pc_file_sha256 "${runner_generator}")"
+  fi
   printf 'LLM_TOKEN_LENGTH=%s\n' "${LLM_TOKEN_LENGTH:-}"
   printf 'TORCHINDUCTOR_IM2COL_MM=%s\n' "${TORCHINDUCTOR_IM2COL_MM:-}"
   printf 'TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE=%s\n' "${TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE:-0}"
+  printf 'TRITON_CHIPYARD_ENABLE_ALIAS_FIRST=%s\n' "${TRITON_CHIPYARD_ENABLE_ALIAS_FIRST:-1}"
+  local custom_op_library="${PYTORCH_CHIPYARD_CUSTOM_OP_LIBRARY:-}"
+  printf 'PYTORCH_CHIPYARD_CUSTOM_OP_LIBRARY=%s\n' "${custom_op_library}"
+  if [[ -n "${custom_op_library}" && -f "${custom_op_library}" ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      printf 'PYTORCH_CHIPYARD_CUSTOM_OP_LIBRARY_SHA256=%s\n' \
+        "$(sha256sum "${custom_op_library}" | awk '{print $1}')"
+    else
+      printf 'PYTORCH_CHIPYARD_CUSTOM_OP_LIBRARY_SHA256=%s\n' \
+        "$(shasum -a 256 "${custom_op_library}" | awk '{print $1}')"
+    fi
+  fi
+  local linalg_to_func_config="${TRITON_CHIPYARD_LINALG_TO_FUNC_CONFIG:-}"
+  printf 'TRITON_CHIPYARD_LINALG_TO_FUNC_CONFIG=%s\n' "${linalg_to_func_config}"
+  if [[ -n "${linalg_to_func_config}" && -f "${linalg_to_func_config}" ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      printf 'TRITON_CHIPYARD_LINALG_TO_FUNC_CONFIG_SHA256=%s\n' \
+        "$(sha256sum "${linalg_to_func_config}" | awk '{print $1}')"
+    else
+      printf 'TRITON_CHIPYARD_LINALG_TO_FUNC_CONFIG_SHA256=%s\n' \
+        "$(shasum -a 256 "${linalg_to_func_config}" | awk '{print $1}')"
+    fi
+    local linalg_custom_library
+    linalg_custom_library="$(python - "${linalg_to_func_config}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1]).expanduser().resolve()
+document = json.loads(config_path.read_text())
+library_path = Path(document["library"]).expanduser()
+if not library_path.is_absolute():
+    library_path = config_path.parent / library_path
+print(library_path.resolve())
+PY
+)"
+    printf 'TRITON_CHIPYARD_LINALG_TO_FUNC_LIBRARY=%s\n' \
+      "${linalg_custom_library}"
+    if [[ -f "${linalg_custom_library}" ]]; then
+      if command -v sha256sum >/dev/null 2>&1; then
+        printf 'TRITON_CHIPYARD_LINALG_TO_FUNC_LIBRARY_SHA256=%s\n' \
+          "$(sha256sum "${linalg_custom_library}" | awk '{print $1}')"
+      else
+        printf 'TRITON_CHIPYARD_LINALG_TO_FUNC_LIBRARY_SHA256=%s\n' \
+          "$(shasum -a 256 "${linalg_custom_library}" | awk '{print $1}')"
+      fi
+    fi
+  fi
+  local extern_call_library="${TRITON_CHIPYARD_EXTERN_CALL_LIBRARY:-}"
+  printf 'TRITON_CHIPYARD_EXTERN_CALL_LIBRARY=%s\n' "${extern_call_library}"
+  if [[ -n "${extern_call_library}" && -f "${extern_call_library}" ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      printf 'TRITON_CHIPYARD_EXTERN_CALL_LIBRARY_SHA256=%s\n' \
+        "$(sha256sum "${extern_call_library}" | awk '{print $1}')"
+    else
+      printf 'TRITON_CHIPYARD_EXTERN_CALL_LIBRARY_SHA256=%s\n' \
+        "$(shasum -a 256 "${extern_call_library}" | awk '{print $1}')"
+    fi
+  fi
   local arg
   for arg in "$@"; do
     printf 'arg=%q\n' "${arg}"

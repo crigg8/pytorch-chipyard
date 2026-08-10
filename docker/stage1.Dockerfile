@@ -3,6 +3,10 @@ FROM ubuntu:20.04
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CONDA_VERSION=24.11.3
 ARG MINICONDA_INSTALLER_URL=https://repo.anaconda.com/miniconda/Miniconda3-py312_24.11.1-0-Linux-x86_64.sh
+# Triton's setup.py otherwise defaults to 2 * os.cpu_count().  On the review
+# server that becomes -j160 and can exhaust memory during the C++ build.
+ARG MAX_JOBS=16
+ARG TRITON_PARALLEL_LINK_JOBS=2
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -59,7 +63,9 @@ RUN test -f pytorch/torch/_inductor/__init__.py || \
 ENV CONDA_ENV_NAME=pytorch-chipyard
 ENV PYTORCH_CHIPYARD_CONDA_ENV=pytorch-chipyard
 
-RUN bash scripts/install.sh && \
+RUN MAX_JOBS="${MAX_JOBS}" \
+    TRITON_PARALLEL_LINK_JOBS="${TRITON_PARALLEL_LINK_JOBS}" \
+    bash scripts/install.sh && \
     conda clean -afy && \
     rm -rf /root/.cache/pip /tmp/triton-chipyard-cache
 

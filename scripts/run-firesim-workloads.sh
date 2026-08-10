@@ -32,6 +32,13 @@ Default:
 
 Options:
   --workload=NAME      Run/collect one workload. May be repeated or comma-separated.
+  --resume             Keep collected results/logs and skip workloads that already
+                       have collected outputs.
+  --resume-from=NAME   Keep collected results/logs and start from NAME in the
+                       selected/discovered workload order.
+  --rvv-panic-retries=N|unlimited
+                       Retry an RVV workload after a detected kernel panic or
+                       corrupt UART. Default: unlimited; 0 disables retries.
   -h, --help           Show this help.
 
 Environment:
@@ -50,6 +57,12 @@ Environment:
   PYTORCH_CHIPYARD_KEEP_RUNFARM=1           Skip terminaterunfarm.
   PYTORCH_CHIPYARD_FIRESIM_HW_CONFIG_OVERRIDES
                                              Comma-separated workload=hw_config list.
+
+Failure handling:
+  While runworkload is active, UART logs are monitored for guest failures such
+  as kernel panics, oopses, signals, and FireSim failure markers. The active
+  run is terminated immediately. RVV kernel failures are cleaned up with
+  firesim kill and retried with a new run farm; other failures stop Stage 2.
 
 Per-workload hardware override:
   PYTORCH_CHIPYARD_FIRESIM_HW_CONFIG_<WORKLOAD>
@@ -101,8 +114,13 @@ clean_dir_contents() {
 clean_collected_results() {
   local enabled="${PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS:-1}"
 
+  if [[ "${RESUME_MODE:-0}" == "1" || -n "${RESUME_FROM:-}" ]]; then
+    enabled=0
+  fi
+
   if [[ "${enabled}" != "1" ]]; then
     mkdir -p "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}" "${PYTORCH_CHIPYARD_LOG_DIR}"
+    log "kept collected result/log dirs for resume"
     return 0
   fi
 
@@ -158,6 +176,25 @@ unique_workloads() {
   done
 }
 
+require_boom_flex_kernel_package() {
+  local workload="$1"
+  local runner image
+
+  case "${workload}" in
+    opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core) ;;
+    *) return 0 ;;
+  esac
+
+  runner="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}/root/llm/run_${workload}.sh"
+  image="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}.img"
+  require_file "${runner}"
+  grep -Fq -- '--kernel-only=flex_attention' "${runner}" || \
+    die "${workload} was packaged for full-model execution; rerun Stage 2 without --resume-from/--resume to regenerate its ELF, package, and image"
+  require_file "${image}"
+  [[ "${image}" -nt "${runner}" ]] || \
+    die "${workload} FireMarshal image predates its kernel-only runner; rebuild the image before FireSim execution"
+}
+
 load_workloads() {
   local workloads=()
   local workload
@@ -174,9 +211,51 @@ load_workloads() {
   for workload in "${workloads[@]}"; do
     require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
     require_file "${FIRESIM_WORKLOAD_DIR}/${workload}.json"
+    require_boom_flex_kernel_package "${workload}"
   done
 
   WORKLOADS=("${workloads[@]}")
+}
+
+apply_resume_filters() {
+  local workload
+  local found=0
+  local filtered=()
+  local pending=()
+
+  if [[ -n "${RESUME_FROM}" ]]; then
+    for workload in "${WORKLOADS[@]}"; do
+      if [[ "${workload}" == "${RESUME_FROM}" ]]; then
+        found=1
+      fi
+      if [[ "${found}" -eq 1 ]]; then
+        filtered+=("${workload}")
+      fi
+    done
+
+    [[ "${found}" -eq 1 ]] || \
+      die "resume workload '${RESUME_FROM}' was not found in the selected/discovered workload list"
+
+    WORKLOADS=("${filtered[@]}")
+    log "resume-from ${RESUME_FROM}: ${#WORKLOADS[@]} workload(s) remaining"
+  fi
+
+  if [[ "${RESUME_MODE}" -eq 1 ]]; then
+    for workload in "${WORKLOADS[@]}"; do
+      if collected_result_complete "${workload}"; then
+        log "resume: skipping completed workload ${workload}"
+      else
+        pending+=("${workload}")
+      fi
+    done
+
+    WORKLOADS=("${pending[@]}")
+    if [[ "${#WORKLOADS[@]}" -eq 0 ]]; then
+      log "resume: no pending workloads"
+      exit 0
+    fi
+    log "resume: ${#WORKLOADS[@]} pending workload(s)"
+  fi
 }
 
 core_for_workload() {
@@ -217,6 +296,12 @@ should_collect_output_bin() {
   local workload="$1"
   local seq_len
 
+  case "${workload}" in
+    opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core)
+      return 1
+      ;;
+  esac
+
   if is_llm_workload "${workload}"; then
     seq_len="$(llm_seq_len_for_workload "${workload}")"
     [[ "${seq_len}" -le 256 ]]
@@ -224,6 +309,30 @@ should_collect_output_bin() {
   fi
 
   return 0
+}
+
+collected_result_dir() {
+  local workload="$1"
+
+  printf '%s/%s\n' "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}" "${workload}"
+}
+
+collected_result_complete() {
+  local workload="$1"
+  local dest
+
+  dest="$(collected_result_dir "${workload}")"
+  [[ -d "${dest}" ]] || return 1
+
+  [[ -f "${dest}/.completed" ]] || return 1
+  [[ -s "${dest}/model.log" ]] || return 1
+  [[ -s "${dest}/autotune.log" ]] || return 1
+  if should_collect_output_bin "${workload}"; then
+    [[ -s "${dest}/output.bin" ]] || return 1
+  fi
+  if [[ -f "${dest}/run.log" ]]; then
+    grep -Fq '[runner] model_ret=0' "${dest}/run.log" || return 1
+  fi
 }
 
 contains_tag() {
@@ -288,7 +397,7 @@ infer_hw_config() {
 
   if contains_tag "${workload}" "boom"; then
     case "${core}" in
-      1) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic" ;;
+      1) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_1core_no_nic" ;;
       2) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic" ;;
       4) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_4core_no_nic" ;;
       *) die "no BOOM hardware config mapping for ${workload}" ;;
@@ -304,11 +413,10 @@ infer_hw_config() {
       1) printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic" ;;
       2) printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_2core_no_nic" ;;
       4)
-        if is_llm_workload "${workload}"; then
-          printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic"
-        else
-          printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic_30mhz"
-        fi
+        # Every four-thread RVV workload uses the same eight-hart target.
+        # Harts 4-7 stay free, avoiding the kernel/OpenMP contention observed
+        # when all four harts of the otherwise identical target are occupied.
+        printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_8core_no_nic_30mhz"
         ;;
       *) die "no RVV hardware config mapping for ${workload}" ;;
     esac
@@ -437,10 +545,235 @@ copy_if_present() {
   return 1
 }
 
+uart_has_repeated_corruption() {
+  local uart="$1"
+
+  # A failed target can emit an unbounded stream of 0xff/0x01 instead of a
+  # printable panic. Normal boot UART output does not contain runs this long.
+  tail -c 65536 "${uart}" 2>/dev/null | \
+    od -An -v -tu1 | \
+    awk '
+      BEGIN { previous = -1; repeated = 0; found = 0 }
+      {
+        for (i = 1; i <= NF; i++) {
+          byte = $i
+          if (byte == previous) {
+            repeated++
+          } else {
+            previous = byte
+            repeated = 1
+          }
+          if ((byte == 1 || byte == 255) && repeated >= 4096) {
+            found = 1
+          }
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    '
+}
+
+uart_failure_line() {
+  local uart line
+  local pattern='\*\*\* FAILED \*\*\*|Kernel panic|Oops -|Unhandled fault|unhandled signal|Unable to handle kernel|BUG: unable to handle|Segmentation fault|Illegal instruction|Assertion failed'
+
+  [[ -d "${FIRESIM_RUNS_DIR}" ]] || return 1
+  while IFS= read -r -d '' uart; do
+    if uart_has_repeated_corruption "${uart}"; then
+      printf '%s: at least 4096 repeated 0xff/0x01 bytes in UART output\n' "${uart}"
+      return 0
+    fi
+
+    line="$(tail -c 1048576 "${uart}" 2>/dev/null | LC_ALL=C strings | grep -E -m1 "${pattern}" || true)"
+    if [[ -n "${line}" ]]; then
+      printf '%s: %s\n' "${uart}" "${line}"
+      return 0
+    fi
+  done < <(find "${FIRESIM_RUNS_DIR}" -maxdepth 2 -type f -name uartlog -print0 2>/dev/null)
+
+  return 1
+}
+
+uart_kernel_failure_line() {
+  local uart line
+  local pattern='Kernel panic|Oops -|Unable to handle kernel|BUG: unable to handle|Fatal exception in interrupt'
+
+  [[ -d "${FIRESIM_RUNS_DIR}" ]] || return 1
+  while IFS= read -r -d '' uart; do
+    if uart_has_repeated_corruption "${uart}"; then
+      printf '%s: at least 4096 repeated 0xff/0x01 bytes in UART output\n' "${uart}"
+      return 0
+    fi
+
+    line="$(tail -c 1048576 "${uart}" 2>/dev/null | LC_ALL=C strings | grep -E -m1 "${pattern}" || true)"
+    if [[ -n "${line}" ]]; then
+      printf '%s: %s\n' "${uart}" "${line}"
+      return 0
+    fi
+  done < <(find "${FIRESIM_RUNS_DIR}" -maxdepth 2 -type f -name uartlog -print0 2>/dev/null)
+
+  return 1
+}
+
+failure_text_is_retryable_kernel() {
+  local failure="$1"
+
+  case "${failure}" in
+    *'Kernel panic'* | *'Oops -'* | *'Unable to handle kernel'* | \
+      *'BUG: unable to handle'* | *'Fatal exception in interrupt'* | \
+      *'repeated 0xff/0x01 bytes'*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+terminate_process_group() {
+  local pid="$1"
+  local attempt
+
+  kill -TERM -- "-${pid}" 2>/dev/null || kill -TERM "${pid}" 2>/dev/null || true
+  for attempt in {1..10}; do
+    kill -0 "${pid}" 2>/dev/null || return 0
+    sleep 1
+  done
+  kill -KILL -- "-${pid}" 2>/dev/null || kill -KILL "${pid}" 2>/dev/null || true
+}
+
+run_firesim_workload_monitored() {
+  local workload="$1"
+  local runtime="$2"
+  local pid manager_status=0 failure=""
+
+  setsid firesim runworkload \
+    -c "${runtime}" \
+    -a "${FIRESIM_HWDB_PATH}" \
+    -r "${FIRESIM_BUILD_RECIPES_PATH}" &
+  pid=$!
+
+  while kill -0 "${pid}" 2>/dev/null; do
+    if failure="$(uart_kernel_failure_line)"; then
+      warn "${workload}: detected retryable guest kernel failure: ${failure}"
+      terminate_process_group "${pid}"
+      wait "${pid}" 2>/dev/null || true
+      return 70
+    fi
+    if failure="$(uart_failure_line)"; then
+      if failure_text_is_retryable_kernel "${failure}"; then
+        warn "${workload}: detected retryable guest kernel failure: ${failure}"
+        terminate_process_group "${pid}"
+        wait "${pid}" 2>/dev/null || true
+        return 70
+      fi
+      warn "${workload}: detected non-retryable guest failure: ${failure}"
+      terminate_process_group "${pid}"
+      wait "${pid}" 2>/dev/null || true
+      return 71
+    fi
+    sleep 5
+  done
+
+  wait "${pid}" || manager_status=$?
+
+  if failure="$(uart_kernel_failure_line)"; then
+    warn "${workload}: detected retryable guest kernel failure: ${failure}"
+    return 70
+  fi
+  if failure="$(uart_failure_line)"; then
+    if failure_text_is_retryable_kernel "${failure}"; then
+      warn "${workload}: detected retryable guest kernel failure: ${failure}"
+      return 70
+    fi
+    warn "${workload}: detected non-retryable guest failure: ${failure}"
+    return 71
+  fi
+
+  return "${manager_status}"
+}
+
+archive_failed_attempt() {
+  local workload="$1"
+  local attempt="$2"
+  local marker="$3"
+  local dest result_dir uart slot
+
+  dest="${PYTORCH_CHIPYARD_LOG_DIR}/failed-attempts/${workload}/attempt-${attempt}"
+  mkdir -p "${dest}"
+
+  result_dir="$(latest_result_dir "${workload}" "${marker}")"
+  if [[ -n "${result_dir}" ]]; then
+    copy_if_present "${result_dir}/run.log" "${dest}/run.log" || true
+    if [[ -f "${result_dir}/uartlog" ]]; then
+      tail -c 4194304 "${result_dir}/uartlog" >"${dest}/uartlog.tail"
+    fi
+  fi
+
+  while IFS= read -r -d '' uart; do
+    slot="$(basename "$(dirname "${uart}")")"
+    tail -c 4194304 "${uart}" >"${dest}/${slot}-uartlog.tail"
+  done < <(find "${FIRESIM_RUNS_DIR}" -maxdepth 2 -type f -name uartlog -print0 2>/dev/null)
+
+  log "${workload}: archived failed attempt ${attempt} -> ${dest}"
+}
+
+validate_workload_result() {
+  local workload="$1"
+  local result_dir="$2"
+  local uart="${result_dir}/uartlog"
+  local run_log="${result_dir}/run.log"
+  local failure=""
+
+  [[ -f "${uart}" ]] || {
+    warn "${workload}: missing uartlog in ${result_dir}"
+    return 1
+  }
+  if uart_has_repeated_corruption "${uart}"; then
+    warn "${workload}: repeated 0xff/0x01 bytes indicate corrupt UART output in ${uart}"
+    return 70
+  fi
+  failure="$(tail -c 1048576 "${uart}" 2>/dev/null | LC_ALL=C strings | \
+    grep -E -m1 'Kernel panic|Oops -|Unable to handle kernel|BUG: unable to handle|Fatal exception in interrupt' || true)"
+  if [[ -n "${failure}" ]]; then
+    warn "${workload}: retryable kernel failure found in ${uart}: ${failure}"
+    return 70
+  fi
+  if LC_ALL=C grep -aEq '\*\*\* FAILED \*\*\*|Kernel panic|Oops -|Unhandled fault|unhandled signal|Unable to handle kernel|BUG: unable to handle|Segmentation fault|Illegal instruction|Assertion failed' "${uart}"; then
+    warn "${workload}: failure marker found in ${uart}"
+    return 1
+  fi
+  LC_ALL=C grep -aFq '*** PASSED ***' "${uart}" || {
+    warn "${workload}: FireSim PASS marker not found in ${uart}"
+    return 1
+  }
+  [[ -s "${run_log}" ]] || {
+    warn "${workload}: missing or empty run.log in ${result_dir}"
+    return 1
+  }
+  grep -Fq '[runner] model_ret=0' "${run_log}" || {
+    warn "${workload}: model did not return zero according to ${run_log}"
+    return 1
+  }
+  [[ -s "${result_dir}/model.log" ]] || {
+    warn "${workload}: missing or empty model.log in ${result_dir}"
+    return 1
+  }
+  [[ -s "${result_dir}/autotune.log" ]] || {
+    warn "${workload}: missing or empty autotune.log in ${result_dir}"
+    return 1
+  }
+  if should_collect_output_bin "${workload}"; then
+    [[ -s "${result_dir}/output.bin" ]] || {
+      warn "${workload}: missing or empty output.bin in ${result_dir}"
+      return 1
+    }
+  fi
+}
+
 collect_workload_result() {
   local workload="$1"
   local marker="${2:-}"
-  local result_dir dest log_dest copied=0
+  local result_dir dest log_dest copied=0 validation_status=0
 
   result_dir="$(latest_result_dir "${workload}" "${marker}")"
   if [[ -z "${result_dir}" ]]; then
@@ -448,9 +781,15 @@ collect_workload_result() {
     return 1
   fi
 
-  dest="${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}/${workload}"
+  validate_workload_result "${workload}" "${result_dir}" || validation_status=$?
+  [[ "${validation_status}" -eq 0 ]] || return "${validation_status}"
+
+  dest="$(collected_result_dir "${workload}")"
   log_dest="${PYTORCH_CHIPYARD_LOG_DIR}"
   mkdir -p "${dest}" "${log_dest}"
+
+  copy_if_present "${result_dir}/run.log" "${dest}/run.log" || true
+  copy_if_present "${result_dir}/uartlog" "${dest}/uartlog" || true
 
   if copy_if_present "${result_dir}/model.log" "${dest}/model.log"; then
     cp -f "${result_dir}/model.log" "${log_dest}/${workload}-model.log"
@@ -474,7 +813,7 @@ collect_workload_result() {
     fi
   else
     rm -f "${dest}/output.bin"
-    log "${workload}: skipped output.bin collection for seq > 256 LLM workload"
+    log "${workload}: skipped output.bin collection for no-output workload"
   fi
 
   [[ "${copied}" -eq 1 ]] || return 1
@@ -489,6 +828,8 @@ run_workload() {
   local runtime="$3"
   local marker="$4"
   local status=0
+  local collect_status=0
+  local runworkload_started=0
   local keep_runfarm="${PYTORCH_CHIPYARD_KEEP_RUNFARM:-${KEEP_RUNFARM:-0}}"
 
   log "${workload}: launchrunfarm/infrasetup/runworkload with ${hw_config}"
@@ -507,7 +848,19 @@ run_workload() {
     fi
 
     if [[ "${status}" -eq 0 ]]; then
-      firesim runworkload -c "${runtime}" -a "${FIRESIM_HWDB_PATH}" -r "${FIRESIM_BUILD_RECIPES_PATH}" || status=$?
+      runworkload_started=1
+      run_firesim_workload_monitored "${workload}" "${runtime}" || status=$?
+    fi
+
+    collect_workload_result "${workload}" "${marker}" || collect_status=$?
+    if [[ "${status}" -eq 0 && "${collect_status}" -ne 0 ]]; then
+      status="${collect_status}"
+    fi
+
+    if [[ "${status}" -ne 0 && "${runworkload_started}" -eq 1 ]]; then
+      log "${workload}: cleaning failed FireSim runtime"
+      firesim kill -c "${runtime}" -a "${FIRESIM_HWDB_PATH}" -r "${FIRESIM_BUILD_RECIPES_PATH}" || \
+        warn "${workload}: firesim kill failed; continuing cleanup"
     fi
 
     if [[ "${keep_runfarm}" != "1" ]]; then
@@ -517,11 +870,16 @@ run_workload() {
     exit "${status}"
   ) || status=$?
 
-  collect_workload_result "${workload}" "${marker}" || true
+  if [[ "${status}" -eq 0 ]]; then
+    touch "$(collected_result_dir "${workload}")/.completed"
+  fi
   return "${status}"
 }
 
 SELECTED_WORKLOADS=()
+RESUME_MODE=0
+RESUME_FROM=""
+RVV_PANIC_RETRIES=unlimited
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -534,6 +892,30 @@ while [[ "$#" -gt 0 ]]; do
       split_workload_arg "${1#--workload=}"
       shift
       ;;
+    --resume)
+      RESUME_MODE=1
+      shift
+      ;;
+    --resume-from)
+      [[ "$#" -ge 2 ]] || die "--resume-from requires a value"
+      validate_name "workload" "$2"
+      RESUME_FROM="$2"
+      shift 2
+      ;;
+    --resume-from=*)
+      RESUME_FROM="${1#--resume-from=}"
+      validate_name "workload" "${RESUME_FROM}"
+      shift
+      ;;
+    --rvv-panic-retries)
+      [[ "$#" -ge 2 ]] || die "--rvv-panic-retries requires a value"
+      RVV_PANIC_RETRIES="$2"
+      shift 2
+      ;;
+    --rvv-panic-retries=*)
+      RVV_PANIC_RETRIES="${1#--rvv-panic-retries=}"
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -544,11 +926,15 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+[[ "${RVV_PANIC_RETRIES}" == "unlimited" || "${RVV_PANIC_RETRIES}" =~ ^[0-9]+$ ]] || \
+  die "invalid --rvv-panic-retries=${RVV_PANIC_RETRIES}; expected a non-negative integer or unlimited"
+
 require_dir "${FIRESIM_DIR}"
 require_dir "${FIRESIM_WORKLOAD_DIR}"
 
 WORKLOADS=()
 load_workloads
+apply_resume_filters
 clean_collected_results
 
 require_file "${FIRESIM_DIR}/sourceme-manager.sh"
@@ -557,12 +943,30 @@ require_file "${fpga_db}"
 log "FPGA DB: ${fpga_db}"
 
 for workload in "${WORKLOADS[@]}"; do
-  clean_firesim_runs_dir
   hw_config="$(infer_hw_config "${workload}")"
   require_hw_config "${hw_config}"
   runtime="$(generate_runtime_config "${workload}" "${hw_config}" "${fpga_db}")"
   marker="${PYTORCH_CHIPYARD_FIRESIM_RUNTIME_DIR}/.${workload}.run-start"
   mkdir -p "$(dirname "${marker}")"
-  : >"${marker}"
-  run_workload "${workload}" "${hw_config}" "${runtime}" "${marker}"
+  rm -f "$(collected_result_dir "${workload}")/.completed"
+  attempt=1
+  while true; do
+    clean_firesim_runs_dir
+    : >"${marker}"
+    if run_workload "${workload}" "${hw_config}" "${runtime}" "${marker}"; then
+      break
+    else
+      status=$?
+    fi
+    archive_failed_attempt "${workload}" "${attempt}" "${marker}"
+    if contains_tag "${workload}" "rvv" && [[ "${status}" -eq 70 ]]; then
+      if [[ "${RVV_PANIC_RETRIES}" == "unlimited" || \
+          "${attempt}" -le "${RVV_PANIC_RETRIES}" ]]; then
+        log "${workload}: retrying after kernel failure (${attempt}/${RVV_PANIC_RETRIES})"
+        attempt=$((attempt + 1))
+        continue
+      fi
+    fi
+    die "${workload}: failed with status ${status}; stopping before the next workload infrasetup"
+  done
 done

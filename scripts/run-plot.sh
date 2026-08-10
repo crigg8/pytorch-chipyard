@@ -22,6 +22,7 @@ Generate paper figures from collected FireSim results.
 
 Options:
   --results-dir=PATH  Result directory. Passed to scripts/figure/plot_results.sh.
+  --only-alias-first  Generate only the Figure 5(c) alias-first plot.
   -h, --help          Show this help.
 
 Environment:
@@ -42,6 +43,10 @@ while [[ "$#" -gt 0 ]]; do
       shift 2
       ;;
     --results-dir=*)
+      plot_args+=("$1")
+      shift
+      ;;
+    --only-alias-first)
       plot_args+=("$1")
       shift
       ;;

@@ -230,6 +230,8 @@ __marimo__/
 
 /chipyard/
 
+# Local FireMarshal/FireSim runtime state and caches
+.firemarshal/
 .firesim-runtime/
 FIRESIM_RUNS_DIR/
 examples/.logs/

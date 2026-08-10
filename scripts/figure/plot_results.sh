@@ -26,7 +26,7 @@ die() {
 usage() {
   cat <<EOF
 Usage:
-  bash scripts/figure/plot_results.sh [--results-dir=PATH]
+  bash scripts/figure/plot_results.sh [--results-dir=PATH] [--only-alias-first]
 
 Default:
   Generate CSV inputs from FireSim results, run all paper figure scripts, and
@@ -34,6 +34,7 @@ Default:
 
 Options:
   --results-dir=PATH  Result directory. Default: ${RESULTS_DIR}
+  --only-alias-first  Generate only the Figure 5(c) alias-first plot.
   -h, --help          Show this help.
 
 Environment:
@@ -43,6 +44,8 @@ Environment:
   PYTORCH_CHIPYARD_LOG_DIR                       Default log directory
 EOF
 }
+
+only_alias_first=0
 
 select_python_cmd() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -87,6 +90,10 @@ while [[ "$#" -gt 0 ]]; do
       RESULTS_DIR="${1#--results-dir=}"
       shift
       ;;
+    --only-alias-first)
+      only_alias_first=1
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -116,17 +123,22 @@ log "python      : $python_path"
 
 "${PYTHON_CMD[@]}" "$FIGURE_SCRIPT_DIR/generate_plot_inputs.py" --results-dir "$RESULTS_DIR"
 
-plot_scripts=(
-  plot_cnn_absolute_cycles.py
-  plot_cnn_result.py
-  plot_im2col.py
-  plot_sdpa_prefill_256.py
-  plot_flex_prefill.py
-  plot_flash_window_core_ratio.py
-  plot_im2col_site_attribution.py
-  plot_mobilenet_squeezenet_attribution.py
-  plot_gemmini_max_autotune.py
-)
+if [[ "${only_alias_first}" -eq 1 ]]; then
+  plot_scripts=(plot_alias_first_ablation.py)
+else
+  plot_scripts=(
+    plot_cnn_absolute_cycles.py
+    plot_cnn_result.py
+    plot_alias_first_ablation.py
+    plot_im2col.py
+    plot_sdpa_prefill_256.py
+    plot_flex_prefill.py
+    plot_flash_window_core_ratio.py
+    plot_im2col_site_attribution.py
+    plot_mobilenet_squeezenet_attribution.py
+    plot_gemmini_max_autotune.py
+  )
+fi
 
 failed=0
 for plot_script in "${plot_scripts[@]}"; do

@@ -21,8 +21,8 @@ Examples:
 Options:
   --model=LIST         Model list. default expands to opt,pythia.
   --attention=LIST     Attention list. default expands to sdpa,flash,window.
-  --host=LIST          Host list. default expands to rocket for SDPA and
-                       rocket,boom for flash/window.
+  --host=LIST          Host list. The paper default uses Rocket for every
+                       model/mode and BOOM only for OPT flash/window.
   --seq-len=LIST       Sequence length list. default expands to 256,512,768,1024.
   --artifact-dir=PATH  Output directory. For multiple compile combinations, PATH is
                        treated as a root and per-combination subdirectories are used.
@@ -189,6 +189,9 @@ for model in "${models[@]}"; do
       built_cores=()
       for host in "${hosts[@]}"; do
         if [[ "${host_arg_default}" -eq 1 && "${attention}" == "sdpa" && "${host}" == "boom" ]]; then
+          continue
+        fi
+        if [[ "${host_arg_default}" -eq 1 && "${host}" == "boom" && "${model}" != "opt" ]]; then
           continue
         fi
         core="$(pc_core_for_host "${host}")"

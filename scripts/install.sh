@@ -61,7 +61,7 @@ pushd triton
 LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include \
   LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib \
   LLVM_SYSPATH=$LLVM_BUILD_DIR \
-  python -m pip install -e .
+  python -m pip install --no-build-isolation -e .
 popd 
 
 

@@ -20,7 +20,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/package-firemarshal-workload.sh [--no-clean]
+  bash scripts/package-firemarshal-workload.sh [options]
 
 Default:
   Scan artifact-* directories under examples/ for generated Stage 1 artifacts
@@ -33,6 +33,8 @@ Generated files:
   $FIRESIM_WORKLOAD_DIR/<workload>.json
 
 Options:
+  --artifact-dir=PATH  Package ELF files from this artifact directory only.
+                       May be repeated.
   --no-clean            Keep previously generated workload JSONs/overlays.
   --no-chipyard-check   Allow file generation without initialized FireMarshal/FireSim.
   -h, --help            Show this help.
@@ -295,6 +297,36 @@ is_shadowed_elf() {
   return 1
 }
 
+elf_is_in_build_plan() {
+  local artifact_dir="$1"
+  local core="$2"
+  local core_file="${artifact_dir}/.pytorch-chipyard-build-cores"
+
+  [[ -f "${core_file}" ]] || return 0
+  grep -Fxq -- "${core}" "${core_file}"
+}
+
+is_boom_flex_kernel_workload() {
+  local workload="$1"
+
+  case "${workload}" in
+    opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+require_flex_kernel_only_elf() {
+  local elf_path="$1"
+
+  if ! LC_ALL=C grep -aFq -- '--kernel-only=flex_attention' "${elf_path}"; then
+    die "${elf_path} does not support BOOM FlexAttention kernel-only execution; rerun Stage 1 flex-attention generation, then rebuild the ELF"
+  fi
+}
+
 clean_generated_workloads() {
   [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" ]] || return 0
 
@@ -364,7 +396,8 @@ write_workload() {
   local input_path input_base weights_path
   local workload_dir deploy_workload_dir overlay_dir guest_dir runner_path hook_path
   local workload_json deploy_json places cpu_affinity model_command
-  local seq_len expect_output_bin runner_check_files output_entries
+  local omp_wait_policy gomp_spincount
+  local seq_len expect_output_bin runner_check_files output_entries kernel_only=0
 
   elf_base="$(basename "${elf_path}")"
   core="$(infer_core_from_elf "${elf_base}")"
@@ -399,16 +432,38 @@ write_workload() {
 
   mkdir -p "${guest_dir}" "${deploy_workload_dir}" "$(dirname "${runner_path}")"
 
+  if is_boom_flex_kernel_workload "${workload_name}"; then
+    kernel_only=1
+    require_flex_kernel_only_elf "${elf_path}"
+  fi
+
   cp -f "${elf_path}" "${guest_dir}/${elf_base}"
   cp -f "${input_path}" "${guest_dir}/${input_base}"
-  cp -f "${weights_path}" "${guest_dir}/weights.bin"
+  if [[ "${kernel_only}" -eq 1 ]]; then
+    # BOOM measures one FlexAttention launch; the full OPT weights are unused.
+    : >"${guest_dir}/weights.bin"
+  else
+    cp -f "${weights_path}" "${guest_dir}/weights.bin"
+  fi
   chmod +x "${guest_dir}/${elf_base}" 2>/dev/null || true
 
   places="$(omp_places_for "${core}")"
   cpu_affinity="$(omp_cpu_affinity_for "${core}")"
+  omp_wait_policy=PASSIVE
+  gomp_spincount=0
+  if [[ "${workload_name}" == *-rvv-* ]]; then
+    # Keep RVV workers resident instead of repeatedly entering the kernel's
+    # OpenMP wait/wake path. This is the policy used by the successful
+    # four-thread ResNet run on the eight-hart target.
+    omp_wait_policy=ACTIVE
+    gomp_spincount=INFINITE
+  fi
   model_command="$(shell_quote "./${elf_base}") $(shell_quote "${input_base}") weights.bin output.bin"
   expect_output_bin=1
-  if [[ "${kind}" == "llm" ]]; then
+  if [[ "${kernel_only}" -eq 1 ]]; then
+    model_command+=" --kernel-only=flex_attention --no-output"
+    expect_output_bin=0
+  elif [[ "${kind}" == "llm" ]]; then
     seq_len="$(llm_seq_len_for "${artifact_dir}")"
     if [[ "${seq_len}" -gt 256 ]]; then
       model_command+=" --no-output"
@@ -453,11 +508,11 @@ export OMP_NESTED=false
 export OMP_PROC_BIND=close
 export OMP_PLACES="${places}"
 export OMP_SCHEDULE=static
-export OMP_WAIT_POLICY=PASSIVE
+export OMP_WAIT_POLICY=${omp_wait_policy}
 export OMP_DISPLAY_ENV=FALSE
 export OMP_DISPLAY_AFFINITY=FALSE
 export GOMP_CPU_AFFINITY="${cpu_affinity}"
-export GOMP_SPINCOUNT=0
+export GOMP_SPINCOUNT=${gomp_spincount}
 export MALLOC_ARENA_MAX=1
 
 chmod +x ./${elf_base} 2>/dev/null || true
@@ -521,12 +576,22 @@ EOF
 }
 
 artifact_root="${WORKSPACE}/examples"
+artifact_dir_args=()
 check_chipyard=1
 clean_workloads=1
 rootfs_size="${PYTORCH_CHIPYARD_FIREMARSHAL_ROOTFS_SIZE:-8GiB}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
+    --artifact-dir)
+      [[ "$#" -ge 2 ]] || die "--artifact-dir requires a value"
+      artifact_dir_args+=("$2")
+      shift 2
+      ;;
+    --artifact-dir=*)
+      artifact_dir_args+=("${1#--artifact-dir=}")
+      shift
+      ;;
     --no-clean)
       clean_workloads=0
       shift
@@ -549,6 +614,11 @@ artifact_root="$(abs_dir "${artifact_root}")"
 ARTIFACT_ROOT="${artifact_root}"
 validate_size "${rootfs_size}"
 
+artifact_dirs=()
+for artifact_dir in "${artifact_dir_args[@]}"; do
+  artifact_dirs+=("$(abs_dir "${artifact_dir}")")
+done
+
 if [[ "${check_chipyard}" -eq 1 ]]; then
   [[ -f "${FIREMARSHAL_DIR}/marshal" ]] || \
     die "FireMarshal is not initialized at ${FIREMARSHAL_DIR}; check CHIPYARD_DIR or FIREMARSHAL_DIR"
@@ -565,9 +635,15 @@ fi
 shopt -s nullglob
 
 elf_paths=()
-while IFS= read -r -d '' elf_path; do
-  elf_paths+=("${elf_path}")
-done < <(discover_artifact_elf_paths "${artifact_root}")
+if [[ "${#artifact_dirs[@]}" -gt 0 ]]; then
+  while IFS= read -r -d '' elf_path; do
+    elf_paths+=("${elf_path}")
+  done < <(find "${artifact_dirs[@]}" -maxdepth 1 -type f -name 'model-*core.elf' -print0 | sort -z)
+else
+  while IFS= read -r -d '' elf_path; do
+    elf_paths+=("${elf_path}")
+  done < <(discover_artifact_elf_paths "${artifact_root}")
+fi
 
 if [[ "${#elf_paths[@]}" -eq 0 ]]; then
   warn "no model-*core.elf files found under ${artifact_root}"
@@ -586,6 +662,10 @@ for elf_path in "${elf_paths[@]}"; do
   elf_base="$(basename "${elf_path}")"
   core="$(infer_core_from_elf "${elf_base}")"
   [[ -n "${core}" ]] || die "could not infer core count from ${elf_path}"
+  if ! elf_is_in_build_plan "${artifact_dir}" "${core}"; then
+    warn "skipping stale ${elf_path}; core ${core} is not in ${artifact_dir}/.pytorch-chipyard-build-cores"
+    continue
+  fi
   if is_shadowed_elf "${artifact_dir}" "${core}"; then
     continue
   fi

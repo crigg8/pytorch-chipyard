@@ -209,6 +209,15 @@ pc_build_stamp_path() {
   printf '%s\n' "${artifact_dir}/.model-${core}core.elf-fingerprint"
 }
 
+pc_file_sha256() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${path}" | awk '{print $1}'
+  else
+    shasum -a 256 "${path}" | awk '{print $1}'
+  fi
+}
+
 pc_build_fingerprint() {
   local backend="$1"
   local artifact_dir="$2"
@@ -220,6 +229,8 @@ pc_build_fingerprint() {
   printf 'core=%s\n' "${core}"
   printf 'chipyard_env=%s\n' "${PYTORCH_CHIPYARD_REAL_CHIPYARD_ENV_PATH:-${CHIPYARD_ENV_PATH:-}}"
   printf 'riscv_toolchain_bin_dir=%s\n' "${PYTORCH_CHIPYARD_RESOLVED_RISCV_TOOLCHAIN_BIN_DIR:-}"
+  printf 'build_script_sha256=%s\n' "$(pc_file_sha256 "${artifact_dir}/build.sh")"
+  printf 'model_spec_sha256=%s\n' "$(pc_file_sha256 "${artifact_dir}/model_spec.json")"
   if [[ -f "${compile_stamp}" ]]; then
     cat "${compile_stamp}"
   else
