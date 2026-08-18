@@ -28,7 +28,8 @@ while [[ "$#" -gt 0 ]]; do
       printf '%s\n' \
         'Usage: build-verilator.sh [--config=CONFIG] [-j N]' \
         'Default: OriginalGemminiRocketConfig (INT8, DIM=16, one Rocket core).' \
-        'Environment: TABLE2_FIRTOOL_BIN may select an explicit firtool binary.'
+        'Environment: TABLE2_FIRTOOL_BIN may select an explicit firtool binary.' \
+        'TABLE2_VERILATOR_RISCV may select the Chipyard host fesvr installation.'
       exit 0
       ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -52,6 +53,48 @@ fi
   exit 1
 }
 export PATH="$(dirname -- "${firtool_bin}"):${PATH}"
+
+# tvm-gemmini-ae intentionally exports its own older RISC-V compiler for TVM
+# and bare-metal kernel construction. Chipyard's Verilator makefiles also use
+# RISCV, but there it means the matching host-side Spike/FESVR installation.
+# Keep this override local to this subprocess so the two toolchains cannot leak
+# into one another.
+verilator_riscv="${TABLE2_VERILATOR_RISCV:-${CHIPYARD_DIR}/.conda-env/riscv-tools}"
+for required_path in \
+  "${verilator_riscv}/include/fesvr/htif.h" \
+  "${verilator_riscv}/include/fesvr/tsi.h" \
+  "${verilator_riscv}/include/fesvr/memif.h" \
+  "${verilator_riscv}/lib/libfesvr.a"; do
+  [[ -r "${required_path}" ]] || {
+    printf 'Chipyard Verilator dependency not found: %s\n' "${required_path}" >&2
+    printf 'Set TABLE2_VERILATOR_RISCV to a matching Spike/FESVR installation.\n' >&2
+    exit 1
+  }
+done
+if [[ ! -r "${verilator_riscv}/lib/libriscv.so" && \
+      ! -r "${verilator_riscv}/lib/libriscv.a" ]]; then
+  printf 'Chipyard Verilator dependency not found: %s/lib/libriscv.{so,a}\n' \
+    "${verilator_riscv}" >&2
+  exit 1
+fi
+export RISCV="${verilator_riscv}"
+export PATH="${CHIPYARD_DIR}/.conda-env/bin:${RISCV}/bin:${PATH}"
+export LD_LIBRARY_PATH="${RISCV}/lib:${LD_LIBRARY_PATH:-}"
+export CPATH="${RISCV}/include${CPATH:+:${CPATH}}"
+export LIBRARY_PATH="${RISCV}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"
+
+# Verilator records RISCV include/library paths in VTestDriver.mk. A failed run
+# may therefore retain a syntactically valid makefile with TVM's incompatible
+# toolchain paths. Remove only that generated makefile so the normal Chipyard
+# rule recreates the model directory with the selected FESVR installation.
+generated_model_dir="${sim_dir}/generated-src/chipyard.harness.TestHarness.${config}/chipyard.harness.TestHarness.${config}"
+generated_model_mk="${generated_model_dir}/VTestDriver.mk"
+if [[ -f "${generated_model_mk}" ]] && \
+   ! grep -Fq -- "-I${RISCV}/include" "${generated_model_mk}"; then
+  rm -f -- "${generated_model_mk}"
+  printf '[tvm-verilator] invalidated stale model makefile: %s\n' \
+    "${generated_model_mk}"
+fi
 
 target_include="${CHIPYARD_DIR}/generators/gemmini/software/gemmini-rocc-tests/include"
 target_header="${target_include}/gemmini_params.h"
@@ -104,6 +147,7 @@ trap restore_shared_header EXIT
 
 printf '[tvm-verilator] building CONFIG=%s with %s jobs\n' "${config}" "${jobs}"
 printf '[tvm-verilator] firtool=%s\n' "${firtool_bin}"
+printf '[tvm-verilator] RISCV=%s\n' "${RISCV}"
 make -C "${sim_dir}" -j"${jobs}" CONFIG="${config}"
 simulator="${sim_dir}/simulator-chipyard.harness-${config}"
 [[ -x "${simulator}" ]] || { printf 'simulator was not produced: %s\n' "${simulator}" >&2; exit 1; }
