@@ -1,10 +1,10 @@
 [submodule "pytorch"]
 	path = pytorch
-	url = git@github.com:crigg8/pytorch.git
+	url = https://github.com/crigg8/pytorch.git
 	branch = pytorch-chipyard
 [submodule "triton"]
 	path = triton
-	url = git@github.com:crigg8/triton.git
+	url = https://github.com/crigg8/triton.git
 	branch = pytorch-chipyard
 [submodule "triton_chipyard"]
 	path = triton_chipyard
@@ -12,7 +12,7 @@
 	branch = pytorch-chipyard
 [submodule "llvm-project"]
 	path = llvm-project
-	url = git@github.com:crigg8/llvm-project.git
+	url = https://github.com/crigg8/llvm-project.git
 	branch = pytorch-chipyard
 [submodule "buddy-mlir"]
 	path = buddy-mlir
