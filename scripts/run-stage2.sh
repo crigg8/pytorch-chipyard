@@ -60,12 +60,14 @@ Options:
   -h, --help            Show this help.
 
 Environment:
+  The script automatically sources PYTORCH_CHIPYARD_ACCOUNT_ENV (or the legacy
+  TABLE2_ACCOUNT_ENV) when it exists. It defaults to $HOME/.ae-env.sh.
   CHIPYARD_DIR must point to the local Chipyard checkout. scripts/env.sh
   derives CHIPYARD_ENV_PATH as $CHIPYARD_DIR/env.sh.
   PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS defaults to 0 so existing collected
   results and logs are preserved. Set it to 1 to clean them before FireSim runs.
   TABLE2_TVM_AE_ROOT points to the prepared TVM-Gemmini AE tree. It defaults to
-  /home/ae/tvm-gemmini-ae on the author review server.
+  $HOME/tvm-gemmini-ae on the author review server.
 EOF
 }
 
@@ -301,6 +303,14 @@ fi
 # by earlier invocations unless cleanup is explicitly requested by the caller.
 export PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS="${PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS:-0}"
 
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+if [[ -f "${account_env}" ]]; then
+  set +u
+  source "${account_env}"
+  set -u
+  log "loaded account environment: ${account_env}"
+fi
+
 set +u
 source "${SCRIPT_DIR}/env.sh"
 set -u
@@ -310,7 +320,7 @@ cd "${REPO_ROOT}"
 if [[ "${skip_table2}" -eq 0 ]]; then
   table2_script="${SCRIPT_DIR}/run_table2.sh"
   table2_results_tool="${SCRIPT_DIR}/table2_results.py"
-  table2_tvm_ae_root="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
+  table2_tvm_ae_root="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
   table2_stage1_output="${TABLE2_STAGE1_OUTPUT_DIR:-${REPO_ROOT}/results/table2/stage1-latest}"
   [[ -f "${table2_script}" ]] || die "missing Table 2 runner: ${table2_script}"
   [[ -f "${table2_results_tool}" ]] || die "missing Table 2 results tool: ${table2_results_tool}"

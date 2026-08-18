@@ -15,7 +15,8 @@ have already configured:
 - passwordless SSH from the AE account to `localhost` for the local run farm;
 - shared FireMarshal/FireSim output directories writable by the `firesim`
   group; and
-- the environment loaded by the AE account's `.bashrc`.
+- `CHIPYARD_DIR` and `TABLE2_TVM_AE_ROOT` defined by the AE account's
+  `~/.ae-env.sh`, with that file loaded by `.bashrc`.
 
 These are host/account setup tasks performed once by the administrator. They
 are not repeated for each clone or experiment. On the authors' review server,
@@ -58,7 +59,8 @@ ResNet-50, and AlexNet. Their fixed definitions are maintained by
 ## 3. Run Stage 2
 
 If Stage 2 is started in a new shell, load the preconfigured account
-environment once before running it.
+environment once before running it. `run-stage2.sh` also sources
+`~/.ae-env.sh` automatically, so the host paths are identical in every shell.
 
 ```bash
 source ~/.bashrc

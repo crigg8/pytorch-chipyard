@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+if [[ -f "${account_env}" ]]; then
+  set +u
+  source "${account_env}"
+  set -u
+fi
+TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+account_chipyard_dir="${CHIPYARD_DIR:-}"
 source "${TVM_AE_ROOT}/scripts/env.sh"
+if [[ -n "${account_chipyard_dir}" ]]; then
+  export CHIPYARD_DIR="${account_chipyard_dir}"
+  export FIRESIM_DIR="${CHIPYARD_DIR}/sims/firesim"
+  export DTC_BIN="${CHIPYARD_DIR}/.conda-env/bin/dtc"
+  export PK_BIN="${CHIPYARD_DIR}/.conda-env/riscv-tools/riscv64-unknown-elf/bin/pk"
+fi
 
 config="${TABLE2_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
 jobs="${TABLE2_VERILATOR_BUILD_JOBS:-8}"
@@ -14,7 +27,8 @@ while [[ "$#" -gt 0 ]]; do
     -h | --help)
       printf '%s\n' \
         'Usage: build-verilator.sh [--config=CONFIG] [-j N]' \
-        'Default: OriginalGemminiRocketConfig (INT8, DIM=16, one Rocket core).'
+        'Default: OriginalGemminiRocketConfig (INT8, DIM=16, one Rocket core).' \
+        'Environment: TABLE2_FIRTOOL_BIN may select an explicit firtool binary.'
       exit 0
       ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -24,11 +38,96 @@ done
 [[ "${jobs}" =~ ^[1-9][0-9]*$ ]] || { printf 'invalid job count: %s\n' "${jobs}" >&2; exit 2; }
 sim_dir="${CHIPYARD_DIR}/sims/verilator"
 [[ -f "${sim_dir}/Makefile" ]] || { printf 'Chipyard Verilator directory not found: %s\n' "${sim_dir}" >&2; exit 1; }
+
+firtool_bin="${TABLE2_FIRTOOL_BIN:-}"
+if [[ -z "${firtool_bin}" ]]; then
+  firtool_bin="${CHIPYARD_DIR}/.conda-env/riscv-tools/bin/firtool"
+  if [[ ! -x "${firtool_bin}" ]]; then
+    firtool_bin="$(command -v firtool || true)"
+  fi
+fi
+[[ -n "${firtool_bin}" && -x "${firtool_bin}" ]] || {
+  printf 'firtool not found; expected %s or set TABLE2_FIRTOOL_BIN\n' \
+    "${CHIPYARD_DIR}/.conda-env/riscv-tools/bin/firtool" >&2
+  exit 1
+}
+export PATH="$(dirname -- "${firtool_bin}"):${PATH}"
+
+target_include="${CHIPYARD_DIR}/generators/gemmini/software/gemmini-rocc-tests/include"
+target_header="${target_include}/gemmini_params.h"
+shared_header="${TABLE2_FIRESIM_GEMMINI_HEADER:-${CHIPYARD_DIR}/sims/firesim/deploy/results-build/gemmini_params.h}"
+shared_header_backup=""
+shared_header_existed=0
+shared_header_stamp_before=""
+
+restore_shared_header() {
+  local rc="$?"
+  trap - EXIT
+  if [[ "${shared_header_existed}" -eq 1 ]]; then
+    if cp -f -- "${shared_header_backup}" "${shared_header}"; then
+      rm -f -- "${shared_header_backup}"
+      printf '[tvm-verilator] restored shared FireSim header: %s\n' "${shared_header}"
+    else
+      printf 'failed to restore shared FireSim header; backup retained at %s\n' \
+        "${shared_header_backup}" >&2
+      rc=1
+    fi
+  elif [[ -e "${shared_header}" ]]; then
+    if ! rm -f -- "${shared_header}"; then
+      printf 'failed to remove Table 2 generated shared header: %s\n' "${shared_header}" >&2
+      rc=1
+    fi
+  fi
+  exit "${rc}"
+}
+
+if [[ -e "${shared_header}" ]]; then
+  [[ -f "${shared_header}" && -r "${shared_header}" && -w "${shared_header}" ]] || {
+    printf 'shared FireSim Gemmini header must be a readable/writable file: %s\n' \
+      "${shared_header}" >&2
+    exit 1
+  }
+  shared_header_backup="$(mktemp)"
+  if ! cp -- "${shared_header}" "${shared_header_backup}"; then
+    rm -f -- "${shared_header_backup}"
+    printf 'failed to back up shared FireSim header: %s\n' "${shared_header}" >&2
+    exit 1
+  fi
+  shared_header_existed=1
+  shared_header_stamp_before="$(stat -c '%y:%s' "${shared_header}")"
+elif [[ -d "$(dirname -- "${shared_header}")" && ! -w "$(dirname -- "${shared_header}")" ]]; then
+  printf 'shared FireSim results directory is not writable: %s\n' \
+    "$(dirname -- "${shared_header}")" >&2
+  exit 1
+fi
+trap restore_shared_header EXIT
+
 printf '[tvm-verilator] building CONFIG=%s with %s jobs\n' "${config}" "${jobs}"
+printf '[tvm-verilator] firtool=%s\n' "${firtool_bin}"
 make -C "${sim_dir}" -j"${jobs}" CONFIG="${config}"
 simulator="${sim_dir}/simulator-chipyard.harness-${config}"
 [[ -x "${simulator}" ]] || { printf 'simulator was not produced: %s\n' "${simulator}" >&2; exit 1; }
+
+# The author Chipyard tree redirects Gemmini's generated header into FireSim's
+# results-build directory. If elaboration updated it, copy that generated header
+# to the standard include tree used by TVM, then let the EXIT trap restore the
+# pre-existing FireSim/RVV header. Upstream Chipyard writes target_header
+# directly, in which case shared_header remains unchanged and no copy is needed.
+if [[ -f "${shared_header}" ]]; then
+  shared_header_stamp_after="$(stat -c '%y:%s' "${shared_header}")"
+  if [[ "${shared_header_existed}" -eq 0 || "${shared_header_stamp_after}" != "${shared_header_stamp_before}" ]]; then
+    [[ -d "${target_include}" ]] || { printf 'Gemmini include directory not found: %s\n' "${target_include}" >&2; exit 1; }
+    cp -f -- "${shared_header}" "${target_header}"
+    printf '[tvm-verilator] synchronized generated target header: %s\n' "${target_header}"
+  fi
+fi
+[[ -f "${target_header}" ]] || { printf 'Verilator target header not found: %s\n' "${target_header}" >&2; exit 1; }
+if [[ "${config}" == "OriginalGemminiRocketConfig" ]]; then
+  grep -Eq '^#define DIM 16$' "${target_header}" || { printf 'expected DIM=16 in %s\n' "${target_header}" >&2; exit 1; }
+  grep -Eq '^typedef int8_t elem_t;$' "${target_header}" || { printf 'expected int8 elem_t in %s\n' "${target_header}" >&2; exit 1; }
+  grep -Eq '^typedef int32_t acc_t;$' "${target_header}" || { printf 'expected int32 acc_t in %s\n' "${target_header}" >&2; exit 1; }
+fi
 printf '[tvm-verilator] simulator=%s\n' "${simulator}"
 printf '[tvm-verilator] chipyard-commit=%s\n' "$(git -C "${CHIPYARD_DIR}" rev-parse HEAD)"
 printf '[tvm-verilator] gemmini-params=%s\n' \
-  "$(sha256sum "${CHIPYARD_DIR}/generators/gemmini/software/gemmini-rocc-tests/include/gemmini_params.h" | awk '{print $1}')"
+  "$(sha256sum "${target_header}" | awk '{print $1}')"

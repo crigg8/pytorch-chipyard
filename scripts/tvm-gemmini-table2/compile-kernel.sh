@@ -2,8 +2,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+if [[ -f "${account_env}" ]]; then
+  set +u
+  source "${account_env}"
+  set -u
+fi
+TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+account_chipyard_dir="${CHIPYARD_DIR:-}"
 source "${TVM_AE_ROOT}/scripts/env.sh"
+if [[ -n "${account_chipyard_dir}" ]]; then
+  export CHIPYARD_DIR="${account_chipyard_dir}"
+  export FIRESIM_DIR="${CHIPYARD_DIR}/sims/firesim"
+  export DTC_BIN="${CHIPYARD_DIR}/.conda-env/bin/dtc"
+  export PK_BIN="${CHIPYARD_DIR}/.conda-env/riscv-tools/riscv64-unknown-elf/bin/pk"
+  export LD_LIBRARY_PATH="${CHIPYARD_DIR}/.conda-env/riscv-tools/lib:${LD_LIBRARY_PATH:-}"
+fi
 if [[ -n "${TABLE2_TVM_BUILD_DIR:-}" ]]; then
   TVM_BUILD_DIR="${TABLE2_TVM_BUILD_DIR}"
   export TVM_BUILD_DIR

@@ -44,7 +44,7 @@ FireMarshal image construction, and FireSim setup are deliberately untimed.
 
 Environment:
   TABLE2_TVM_AE_ROOT              TVM-Gemmini AE tree
-                                  (default: /home/ae/tvm-gemmini-ae)
+                                  (default: $HOME/tvm-gemmini-ae)
   TABLE2_TVM_BUILD_DIR            Private LLVM-enabled TVM build
                                   (default: <output-dir>/setup/tvm-build-llvm)
   TABLE2_TVM_GEMMINI_INCLUDE      Gemmini headers for the Verilator RTL target
@@ -256,7 +256,7 @@ tvm_prepared=0
 prepare_tvm() {
   [[ "${tvm_prepared}" -eq 0 ]] || return
   run_logged "${output_dir}/logs/setup-tvm.log" \
-    env TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}" \
+    env TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
     bash "${SCRIPT_DIR}/tvm-gemmini-table2/prepare-tvm.sh" --build-dir "${tvm_build_dir}"
   [[ "${RUN_RC}" -eq 0 ]] || die "failed to prepare the LLVM-enabled TVM build; see ${output_dir}/logs/setup-tvm.log"
   tvm_prepared=1
@@ -277,7 +277,7 @@ run_tvm_compile() {
   prepare_tvm
   [[ ! -e "${artifact}" ]] || force=(--force)
   run_logged "${log_path}" env \
-    TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}" \
+    TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
     TABLE2_TVM_BUILD_DIR="${tvm_build_dir}" \
     bash "${SCRIPT_DIR}/tvm-gemmini-table2/compile-kernel.sh" \
     --kernel "${kernel}" --output-dir "${artifact}" "${force[@]}"
@@ -299,19 +299,23 @@ prepare_verilator() {
   local simulator="${TABLE2_VERILATOR_BIN:-}"
   [[ "${verilator_prepared}" -eq 0 ]] || return
   if [[ -z "${simulator}" ]]; then
-    local tvm_root="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
+    local tvm_root="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
     [[ -f "${tvm_root}/scripts/env.sh" ]] || die "TVM-Gemmini environment not found: ${tvm_root}/scripts/env.sh"
     simulator="$(
+      account_chipyard_dir="${CHIPYARD_DIR:-}"
       set +u
       source "${tvm_root}/scripts/env.sh"
       set -u
+      if [[ -n "${account_chipyard_dir}" ]]; then
+        CHIPYARD_DIR="${account_chipyard_dir}"
+      fi
       printf '%s/sims/verilator/simulator-chipyard.harness-%s' \
         "${CHIPYARD_DIR}" "${TABLE2_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
     )"
   fi
   if [[ ! -x "${simulator}" && "${build_verilator}" -eq 1 ]]; then
     run_logged "${output_dir}/logs/setup-verilator.log" \
-      env TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}" \
+      env TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
       bash "${SCRIPT_DIR}/tvm-gemmini-table2/build-verilator.sh"
     [[ "${RUN_RC}" -eq 0 ]] || die "failed to build Verilator; see ${output_dir}/logs/setup-verilator.log"
   fi
@@ -344,7 +348,7 @@ run_tvm_rtl() {
   prepare_verilator
   start="$(date +%s.%N)"
   run_logged "${log_path}" env \
-    TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}" \
+    TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
     TABLE2_VERILATOR_BIN="${TABLE2_VERILATOR_BIN}" \
     bash "${SCRIPT_DIR}/tvm-gemmini-table2/run-verilator.sh" --elf "${elf}"
   end="$(date +%s.%N)"
@@ -363,9 +367,10 @@ run_tvm_rtl() {
 }
 
 load_pytorch_host_environment() {
-  if [[ -f "${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}" ]]; then
+  local account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+  if [[ -f "${account_env}" ]]; then
     set +u
-    source "${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}"
+    source "${account_env}"
     set -u
   fi
   set +u
