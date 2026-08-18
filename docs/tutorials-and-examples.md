@@ -294,7 +294,6 @@ triton.runtime.driver.set_active(ChipyardDriver())
 inductor_config.cpu_backend = "triton_chipyard"
 
 ARTIFACT_DIR = Path(os.environ["PYTORCH_CHIPYARD_DUMP_PATH"]).resolve()
-IMAGE_PATH = Path("examples/img/bus.jpg")
 WEIGHTS = ResNet50_Weights.DEFAULT
 DTYPE = torch.float32
 ATOL = 1e-3
@@ -312,7 +311,7 @@ def build_model() -> torch.nn.Module:
     return model
 
 def make_image_input() -> torch.Tensor:
-    image = Image.open(IMAGE_PATH).convert("RGB")
+    image = Image.new("RGB", (224, 224), (73, 109, 137))
     tensor = WEIGHTS.transforms()(image).to(dtype=DTYPE)
     batch = tensor.unsqueeze(0).contiguous(memory_format=torch.channels_last)
     return torch.as_strided(

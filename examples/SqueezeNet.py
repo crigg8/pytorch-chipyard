@@ -19,7 +19,6 @@ MODEL_WEIGHTS = SqueezeNet1_1_Weights.DEFAULT
 DTYPE = torch.float32
 INPUT_SHAPE = (3, 224, 224)
 SCRIPT_DIR = Path(__file__).resolve().parent
-IMAGE_PATH = SCRIPT_DIR / "img" / "bus.jpg"
 DEFAULT_ARTIFACT_DIR = SCRIPT_DIR.parent / "IR" / TASK_NAME
 VALIDATE_ATOL = 1e-3
 
@@ -72,7 +71,9 @@ def build_model(seed: int) -> torch.nn.Module:
 
 def make_image_input(batch_size: int) -> torch.Tensor:
     preprocess = MODEL_WEIGHTS.transforms()
-    image = Image.open(IMAGE_PATH).convert("RGB")
+    # Keep the AE input self-contained. Pixel values do not affect the compiled
+    # CNN graph, but using a fixed image makes input.bin deterministic.
+    image = Image.new("RGB", (INPUT_SHAPE[2], INPUT_SHAPE[1]), (73, 109, 137))
     tensor = preprocess(image).to(dtype=DTYPE)
     batch = tensor.unsqueeze(0).repeat(batch_size, 1, 1, 1).contiguous(
         memory_format=torch.channels_last
@@ -116,13 +117,12 @@ def compare_tensors(golden: torch.Tensor, observed: torch.Tensor) -> bool:
     return match
 
 
-def print_config(path: Path, input_shape: tuple[int, ...], image_path: Path | None = None) -> None:
+def print_config(path: Path, input_shape: tuple[int, ...]) -> None:
     print(f"[config] model={MODEL_NAME}")
     print(f"[config] weights={MODEL_WEIGHTS.name}")
     print(f"[config] input_shape={input_shape}")
     print("[config] dtype=fp32")
-    if image_path is not None:
-        print(f"[config] image={image_path}")
+    print("[config] input=deterministic-rgb-73-109-137")
     print(f"[config] artifact_dir={path}")
 
 
@@ -132,7 +132,7 @@ def run_compile(args: argparse.Namespace) -> None:
     configure_triton_chipyard(TASK_NAME)
     model = build_model(args.seed)
     inputs = make_image_input(args.batch_size)
-    print_config(path, tuple(inputs.shape), IMAGE_PATH)
+    print_config(path, tuple(inputs.shape))
 
     started_at = time.perf_counter()
     compiled_model = torch.compile(model, backend="inductor")
