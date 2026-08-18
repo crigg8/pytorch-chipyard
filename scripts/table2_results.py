@@ -210,6 +210,30 @@ def count_tvm_kernels(model_dir: Path) -> int:
     return len(functions)
 
 
+def has_passed_measurement(
+    path: Path,
+    *,
+    trial: str,
+    workload: str,
+    toolchain: str,
+    phase: str,
+    simulator: str,
+) -> bool:
+    if not path.is_file():
+        return False
+    with path.open(newline="") as csv_file:
+        rows = csv.DictReader(csv_file)
+        return any(
+            row["trial"] == trial
+            and row["workload"] == workload
+            and row["toolchain"] == toolchain
+            and row["phase"] == phase
+            and row["simulator"] == simulator
+            and row["status"] == "PASS"
+            for row in rows
+        )
+
+
 def extract_last(path: Path, key: str) -> str:
     pattern = re.compile(
         rf"(?:^|\[compile\]\s+){re.escape(key)}=([0-9]+(?:\.[0-9]+)?)",
@@ -286,6 +310,18 @@ def make_parser() -> argparse.ArgumentParser:
 
     firesim_parser = subparsers.add_parser("extract-firesim-wall")
     firesim_parser.add_argument("--log", required=True)
+
+    has_pass_parser = subparsers.add_parser("has-pass")
+    has_pass_parser.add_argument("--csv", required=True)
+    has_pass_parser.add_argument("--trial", required=True)
+    has_pass_parser.add_argument("--workload", required=True)
+    has_pass_parser.add_argument("--toolchain", required=True)
+    has_pass_parser.add_argument(
+        "--phase", choices=["compile", "simulation"], required=True
+    )
+    has_pass_parser.add_argument(
+        "--simulator", choices=["", "spike", "firesim"], default=""
+    )
     return parser
 
 
@@ -305,6 +341,19 @@ def main() -> None:
         print(extract_last(Path(args.log), args.key))
     elif args.command == "extract-firesim-wall":
         print(extract_firesim_wall(Path(args.log)))
+    elif args.command == "has-pass":
+        raise SystemExit(
+            0
+            if has_passed_measurement(
+                Path(args.csv),
+                trial=args.trial,
+                workload=args.workload,
+                toolchain=args.toolchain,
+                phase=args.phase,
+                simulator=args.simulator,
+            )
+            else 1
+        )
 
 
 if __name__ == "__main__":

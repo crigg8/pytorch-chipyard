@@ -33,6 +33,8 @@ Options:
   --phases=LIST       compile,spike,firesim (default: all)
   --repeats=N         Independent trials; summary uses successful medians (default: 1)
   --output-dir=PATH   Result directory (default: results/table2/<UTC run id>)
+  --resume            Reuse successful rows and artifacts already present in
+                      --output-dir, and run only missing measurements
   --dry-run           Print the experiment matrix without compiling or simulating
   -h, --help          Show this help
 
@@ -42,8 +44,9 @@ Outputs:
   logs/               Full command logs
   artifacts/          Per-trial compiler artifacts
 
-On a successful non-dry run, table2.csv is also copied to the stable paper
-artifact path scripts/figures/table2.csv.
+On a successful complete, non-dry run, table2.csv is also copied to the stable
+paper artifact path scripts/figures/table2.csv. Selective Stage 1 compile runs
+leave their partial table only in --output-dir.
 
 Environment:
   TABLE2_ACCOUNT_ENV                Account setup script. Default: $HOME/.ae-env.sh
@@ -58,6 +61,8 @@ Environment:
   TABLE2_TVM_FIRESIM_HW_CONFIG      Default: default INT8 Gemmini Rocket, 1 core
   TABLE2_TVM_MANAGE_LLVM=0          Do not temporarily rebuild TVM with LLVM
   TABLE2_KEEP_GOING=0               Stop scheduling work after the first failure
+  TABLE2_PYTORCH_COMPILE_CONTEXT    Provenance label stored with PyTorch compile
+                                    rows (Stage 1 sets this to docker-stage1)
   PYTORCH_CHIPYARD_CONDA_ENV        PyTorch-Chipyard conda env (default:
                                     pytorch-chipyard)
 
@@ -80,6 +85,7 @@ phases_arg="compile,spike,firesim"
 repeats="${TABLE2_REPEATS:-1}"
 output_dir=""
 dry_run=0
+resume=0
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -93,6 +99,7 @@ while [[ "$#" -gt 0 ]]; do
     --repeats) [[ "$#" -ge 2 ]] || die "--repeats requires a value"; repeats="$2"; shift 2 ;;
     --output-dir=*) output_dir="${1#*=}"; shift ;;
     --output-dir) [[ "$#" -ge 2 ]] || die "--output-dir requires a value"; output_dir="$2"; shift 2 ;;
+    --resume) resume=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown argument '$1'; pass --help for usage" ;;
@@ -150,6 +157,9 @@ if ! contains compile "${phases[@]}" && \
 fi
 
 run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ "${resume}" -eq 1 && -z "${output_dir}" ]]; then
+  die "--resume requires an explicit --output-dir"
+fi
 if [[ -z "${output_dir}" ]]; then
   output_dir="${TABLE2_REPO_ROOT}/results/table2/${run_id}"
 elif [[ "${output_dir}" != /* ]]; then
@@ -159,6 +169,9 @@ mkdir -p "${output_dir}/logs" "${output_dir}/artifacts" "${output_dir}/setup"
 raw_csv="${output_dir}/raw.csv"
 table_csv="${output_dir}/table2.csv"
 paper_table_csv="${TABLE2_REPO_ROOT}/scripts/figures/table2.csv"
+if [[ "${resume}" -eq 1 && ! -s "${raw_csv}" ]]; then
+  die "cannot resume without an existing raw.csv: ${raw_csv}"
+fi
 python "${RESULTS_TOOL}" init --csv "${raw_csv}"
 
 account_env="${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}"
@@ -257,6 +270,26 @@ display_model() {
   esac
 }
 
+display_toolchain() {
+  case "$1" in
+    pytorch) printf '%s\n' PyTorch-Chipyard ;;
+    tvm) printf '%s\n' TVM-Gemmini ;;
+  esac
+}
+
+measurement_passed() {
+  local toolchain="$1"
+  local model="$2"
+  local trial="$3"
+  local phase="$4"
+  local simulator="${5:-}"
+  [[ "${resume}" -eq 1 && "${dry_run}" -eq 0 ]] || return 1
+  python "${RESULTS_TOOL}" has-pass --csv "${raw_csv}" \
+    --trial "${trial}" --workload "$(display_model "${model}")" \
+    --toolchain "$(display_toolchain "${toolchain}")" \
+    --phase "${phase}" --simulator "${simulator}"
+}
+
 mark_failure() {
   failures=$((failures + 1))
   if [[ "${keep_going}" == "0" ]]; then
@@ -296,7 +329,7 @@ pc_compile() {
     --toolchain PyTorch-Chipyard --phase compile --total-wall-s "${wall_s}" \
     --kernel-count "${kernel_count}" --status "${status}" --exit-code "${LAST_RC}" \
     --artifact-path "${artifact}" --log-path "${log_path}" \
-    --notes 'TorchInductor model compile; autotuning candidates included'
+    --notes "TorchInductor model compile; autotuning candidates included; context=${TABLE2_PYTORCH_COMPILE_CONTEXT:-host}"
   LAST_COMPILE_OK=0
   if [[ "${status}" == PASS ]]; then
     LAST_COMPILE_OK=1
@@ -702,6 +735,7 @@ log "models      : ${models[*]}"
 log "toolchains  : ${toolchains[*]}"
 log "phases      : ${phases[*]}"
 log "repeats     : ${repeats}"
+log "resume      : ${resume}"
 
 if contains tvm "${toolchains[@]}" && contains compile "${phases[@]}" && [[ "${dry_run}" -eq 0 ]]; then
   load_tvm_environment
@@ -721,14 +755,26 @@ for toolchain in "${toolchains[@]}"; do
         artifact="${output_dir}/artifacts/pytorch-chipyard/${model}/trial-${trial}/gemmini"
         compile_log="${output_dir}/logs/pytorch-${model}-trial${trial}-compile.log"
         if contains compile "${phases[@]}"; then
-          pc_compile "${model}" "${trial}" "${artifact}" "${compile_log}" || stop_requested=1
+          if measurement_passed "${toolchain}" "${model}" "${trial}" compile "" && \
+              [[ -s "${artifact}/model_spec.json" ]]; then
+            log "reusing Docker Stage 1 compile: pytorch/${model}/trial-${trial}"
+            LAST_COMPILE_OK=1
+          else
+            pc_compile "${model}" "${trial}" "${artifact}" "${compile_log}" || stop_requested=1
+          fi
         fi
       else
         load_tvm_environment
         artifact="${output_dir}/artifacts/tvm-gemmini/${model}/trial-${trial}"
         compile_log="${output_dir}/logs/tvm-${model}-trial${trial}-compile.log"
         if contains compile "${phases[@]}"; then
-          tvm_compile "${model}" "${trial}" "${artifact}" "${compile_log}" || stop_requested=1
+          if measurement_passed "${toolchain}" "${model}" "${trial}" compile "" && \
+              [[ -d "$(tvm_model_dir "${model}" "${artifact}")" ]]; then
+            log "reusing TVM compile: tvm/${model}/trial-${trial}"
+            LAST_COMPILE_OK=1
+          else
+            tvm_compile "${model}" "${trial}" "${artifact}" "${compile_log}" || stop_requested=1
+          fi
         fi
       fi
       [[ "${stop_requested}" -eq 0 ]] || break 3
@@ -737,11 +783,19 @@ for toolchain in "${toolchains[@]}"; do
         continue
       fi
       if contains spike "${phases[@]}"; then
-        run_spike_measurement "${toolchain}" "${model}" "${trial}" "${artifact}" || stop_requested=1
+        if measurement_passed "${toolchain}" "${model}" "${trial}" simulation spike; then
+          log "reusing Spike measurement: ${toolchain}/${model}/trial-${trial}"
+        else
+          run_spike_measurement "${toolchain}" "${model}" "${trial}" "${artifact}" || stop_requested=1
+        fi
       fi
       [[ "${stop_requested}" -eq 0 ]] || break 3
       if contains firesim "${phases[@]}"; then
-        run_firesim_measurement "${toolchain}" "${model}" "${trial}" "${artifact}" || stop_requested=1
+        if measurement_passed "${toolchain}" "${model}" "${trial}" simulation firesim; then
+          log "reusing FireSim measurement: ${toolchain}/${model}/trial-${trial}"
+        else
+          run_firesim_measurement "${toolchain}" "${model}" "${trial}" "${artifact}" || stop_requested=1
+        fi
       fi
       [[ "${stop_requested}" -eq 0 ]] || break 3
     done
@@ -756,8 +810,24 @@ if [[ "${failures}" -ne 0 ]]; then
   die "${failures} measurement phase(s) failed; inspect raw.csv and logs"
 fi
 
-if [[ "${dry_run}" -eq 0 ]]; then
+full_matrix=1
+[[ "${#models[@]}" -eq 4 ]] || full_matrix=0
+[[ "${#toolchains[@]}" -eq 2 ]] || full_matrix=0
+[[ "${#phases[@]}" -eq 3 ]] || full_matrix=0
+for required in alexnet squeezenet mobilenetv2 resnet50; do
+  contains "${required}" "${models[@]}" || full_matrix=0
+done
+for required in pytorch tvm; do
+  contains "${required}" "${toolchains[@]}" || full_matrix=0
+done
+for required in compile spike firesim; do
+  contains "${required}" "${phases[@]}" || full_matrix=0
+done
+
+if [[ "${dry_run}" -eq 0 && "${full_matrix}" -eq 1 ]]; then
   mkdir -p "$(dirname -- "${paper_table_csv}")"
   cp -f "${table_csv}" "${paper_table_csv}"
   log "paper table: ${paper_table_csv}"
+elif [[ "${dry_run}" -eq 0 ]]; then
+  log "partial matrix; stable scripts/figures/table2.csv was not replaced"
 fi

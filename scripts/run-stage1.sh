@@ -27,6 +27,12 @@ Options:
   --skip-sdpa               Skip default SDPA LLM workloads.
   --skip-flex-attn          Skip flash/window attention LLM workloads.
   --skip-gemmini-autotune   Skip gemmini-max-autotune.
+  --skip-table2             Skip Docker-side Table 2 PyTorch compile timing.
+  --only-table2             Run only the Docker-side Table 2 PyTorch compile
+                            measurements and save artifacts for Stage 2.
+  --table2-models=LIST      Limit --only-table2 testing to selected CNNs.
+                            Default: alexnet,squeezenet,mobilenetv2,resnet50.
+  --table2-repeats=N        Table 2 compile trials. Default: 1.
   --only-alias-first        Compile only the Figure 6(c) alias-first ablation:
                             CNN alias-first off plus LLM alias-first on/off,
                             all using Gemmini and 4 cores.
@@ -42,6 +48,10 @@ skip_im2col=0
 skip_sdpa=0
 skip_flex_attn=0
 skip_gemmini_autotune=0
+skip_table2=0
+only_table2=0
+table2_models="alexnet,squeezenet,mobilenetv2,resnet50"
+table2_repeats="${TABLE2_REPEATS:-1}"
 only_alias_first=0
 only_alias_first_cnn_off=0
 skip_alias_first_requested=0
@@ -73,6 +83,32 @@ while [[ "$#" -gt 0 ]]; do
       skip_gemmini_autotune=1
       shift
       ;;
+    --skip-table2)
+      skip_table2=1
+      shift
+      ;;
+    --only-table2)
+      only_table2=1
+      shift
+      ;;
+    --table2-models=*)
+      table2_models="${1#*=}"
+      shift
+      ;;
+    --table2-models)
+      [[ "$#" -ge 2 ]] || die "--table2-models requires a value"
+      table2_models="$2"
+      shift 2
+      ;;
+    --table2-repeats=*)
+      table2_repeats="${1#*=}"
+      shift
+      ;;
+    --table2-repeats)
+      [[ "$#" -ge 2 ]] || die "--table2-repeats requires a value"
+      table2_repeats="$2"
+      shift 2
+      ;;
     --only-alias-first | --only-alias-first-ablation)
       only_alias_first=1
       shift
@@ -94,6 +130,25 @@ done
 if [[ "${only_alias_first}" -eq 1 && "${only_alias_first_cnn_off}" -eq 1 ]]; then
   die "--only-alias-first and --only-alias-first-cnn-off are mutually exclusive"
 fi
+if [[ "${only_table2}" -eq 1 && \
+      ( "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ) ]]; then
+  die "--only-table2 cannot be combined with an alias-first only option"
+fi
+if [[ "${only_table2}" -eq 1 && "${skip_table2}" -eq 1 ]]; then
+  die "--only-table2 cannot be combined with --skip-table2"
+fi
+
+[[ "${table2_repeats}" =~ ^[1-9][0-9]*$ ]] || \
+  die "--table2-repeats must be a positive integer"
+
+if [[ "${only_table2}" -eq 1 ]]; then
+  skip_cnn=1
+  skip_alias_first=1
+  skip_im2col=1
+  skip_sdpa=1
+  skip_flex_attn=1
+  skip_gemmini_autotune=1
+fi
 
 if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; then
   [[ "${skip_alias_first_requested}" -eq 0 ]] || \
@@ -103,6 +158,7 @@ if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; the
   skip_sdpa=1
   skip_flex_attn=1
   skip_gemmini_autotune=1
+  skip_table2=1
 fi
 
 cd "${REPO_ROOT}"
@@ -143,4 +199,21 @@ if [[ "${skip_gemmini_autotune}" -eq 0 ]]; then
   bash "${SCRIPT_DIR}/run_gemmini_autotune.sh"
 fi
 
-log "done; artifacts are under ${REPO_ROOT}/examples"
+if [[ "${skip_table2}" -eq 0 ]]; then
+  table2_results_root="${TABLE2_RESULTS_ROOT:-${REPO_ROOT}/results/table2}"
+  table2_run_id="$(date -u +%Y%m%dT%H%M%SZ)-stage1"
+  table2_output_dir="${table2_results_root}/${table2_run_id}"
+  log "measuring Table 2 PyTorch compile times inside the Stage 1 container"
+  TABLE2_PYTORCH_COMPILE_CONTEXT=docker-stage1 \
+    bash "${REPO_ROOT}/run_table2.sh" \
+    --models="${table2_models}" \
+    --toolchains=pytorch \
+    --phases=compile \
+    --repeats="${table2_repeats}" \
+    --output-dir="${table2_output_dir}"
+  mkdir -p "${table2_results_root}"
+  ln -sfn "${table2_run_id}" "${table2_results_root}/stage1-latest"
+  log "Table 2 Stage 1 results: ${table2_output_dir}"
+fi
+
+log "done; artifacts are under ${REPO_ROOT}/examples and ${REPO_ROOT}/results"

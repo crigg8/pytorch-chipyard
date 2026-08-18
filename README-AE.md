@@ -95,9 +95,10 @@ FireSim.
 ### Stage 1: Torch Model Compile
 
 ```bash
-mkdir -p examples
+mkdir -p examples results
 docker run --rm -it \
   -v "$PWD/examples:/opt/pytorch-chipyard/examples" \
+  -v "$PWD/results:/opt/pytorch-chipyard/results" \
   -v pytorch-chipyard-triton-cache:/tmp/triton-chipyard-cache \
   pytorch-chipyard:stage1 \
   bash scripts/run-stage1.sh
@@ -111,6 +112,20 @@ experiment-specific path such as
 gemmini-max-autotune workload uses
 `examples/artifact-gemmini-max-autotune/gemmini/`.
 
+The default Docker Stage 1 flow also measures the fresh PyTorch-Chipyard CNN
+compilations used by Table 2. Its raw timing rows and compiler artifacts are
+stored under `results/table2/<UTC-run-id>-stage1/`; the portable
+`results/table2/stage1-latest` symlink identifies the run that Stage 2 must
+complete. To test only this path, optionally with one model, use:
+
+```bash
+docker run --rm -it \
+  -v "$PWD/results:/opt/pytorch-chipyard/results" \
+  -v pytorch-chipyard-triton-cache:/tmp/triton-chipyard-cache \
+  pytorch-chipyard:stage1 \
+  bash scripts/run-stage1.sh --only-table2 --table2-models=alexnet
+```
+
 The default Stage 1 flow also generates the alias-first ablation. For AlexNet,
 MobileNetV2, ResNet50, and SqueezeNet it generates the alias-first OFF artifact;
 the ordinary Gemmini artifact is the ON case. For GPT-2, GPT-Neo, OPT, and
@@ -123,10 +138,11 @@ complete flow.
 
 Stage 2 uses the Stage 1 artifacts, such as `runner.cpp`, `weights.bin`,
 `input.bin`, and staged kernel objects, to build `model.elf` files. It then
-generates FireMarshal workloads and runs them through FireSim. A complete,
-non-selective Stage 2 run also reproduces Table 2 by measuring fresh
-PyTorch-Chipyard and TVM-Gemmini compilation, Spike, and FireSim host-wall
-times. This stage requires the local FPGA host setup described above.
+generates FireMarshal workloads and runs them through FireSim. For Table 2 it
+reuses the fresh PyTorch-Chipyard compilation measured inside Docker Stage 1,
+measures the TVM-Gemmini baseline in its own prepared environment, and appends
+the Spike and FireSim host-wall measurements to the same `raw.csv`. This stage
+requires the local FPGA host setup described above.
 
 ```bash
 # Author review server setting.
@@ -147,7 +163,7 @@ export TABLE2_TVM_AE_ROOT=/home/ae/tvm-gemmini-ae
 source scripts/env.sh
 
 # If privileged Docker generated root-owned artifacts, fix host ownership
-# sudo chown -R "$USER:$USER" examples
+# sudo chown -R "$USER:$USER" examples results
 
 bash scripts/run-stage2.sh
 
@@ -155,10 +171,10 @@ bash scripts/run-stage2.sh
 bash scripts/run-plot.sh
 ```
 
-The default `run-stage2.sh` command runs Table 2 after the ordinary Stage 2
-workloads finish. Its paper-facing result is
+The default `run-stage2.sh` command completes the Table 2 run started by Docker
+Stage 1 after the ordinary Stage 2 workloads finish. Its paper-facing result is
 `scripts/figures/table2.csv`; the same file is archived as
-`results/table2/<UTC-run-id>/table2.csv`. `raw.csv`, command logs, and the
+`results/table2/<UTC-run-id>-stage1/table2.csv`. `raw.csv`, command logs, and the
 per-trial artifacts are stored beside the archived file. Table 2 is a table
 rather than a PDF figure, so `run-plot.sh` does not transform this CSV.
 
@@ -174,9 +190,19 @@ without Table 2.
 
 Selective Stage 2 commands (`--workload`, `--only-alias-first`, or
 `--only-alias-first-cnn-off`) and `--skip-firesim` do not launch the unrelated
-full Table 2 matrix. The exact Table 2 workflow can also be rerun independently
-with `bash run_table2.sh`; the default matrix covers all four CNN models, both
-toolchains, and the compile, Spike, and FireSim phases.
+full Table 2 matrix. To reproduce only Table 2, first run Docker Stage 1 with
+`--only-table2`, then run the host command below. Use the same
+`--table2-models` and `--table2-repeats` values in both commands when selecting
+a smaller smoke test.
+
+```bash
+bash scripts/run-stage2.sh --only-table2 --table2-models=alexnet
+```
+
+The completed default matrix covers all four CNN models, both toolchains, and
+the compile, Spike, and FireSim phases. `run_table2.sh --resume` is the lower-
+level continuation interface used by Stage 2; it is not necessary in the
+normal AE command sequence.
 
 `run-plot.sh` names generated plots by their location in the paper:
 

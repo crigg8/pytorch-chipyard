@@ -97,6 +97,53 @@ class TestTable2Results(unittest.TestCase):
             self.assertEqual(row["spike_wall_s"], "6.000000")
             self.assertEqual(row["firesim_wall_s"], "20.000000")
 
+    def test_has_passed_measurement_matches_exact_phase(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw_path = Path(temp_dir) / "raw.csv"
+            table2_results.init_csv(raw_path)
+            args = type(
+                "Args",
+                (),
+                {
+                    "csv": str(raw_path),
+                    "run_id": "stage1",
+                    "trial": "1",
+                    "workload": "AlexNet",
+                    "toolchain": "PyTorch-Chipyard",
+                    "phase": "compile",
+                    "simulator": "",
+                    "total_wall_s": "10",
+                    "kernel_count": "2",
+                    "status": "PASS",
+                    "exit_code": "0",
+                    "artifact_path": "artifact",
+                    "log_path": "log",
+                    "notes": "",
+                },
+            )()
+            table2_results.append_row(args)
+
+            self.assertTrue(
+                table2_results.has_passed_measurement(
+                    raw_path,
+                    trial="1",
+                    workload="AlexNet",
+                    toolchain="PyTorch-Chipyard",
+                    phase="compile",
+                    simulator="",
+                )
+            )
+            self.assertFalse(
+                table2_results.has_passed_measurement(
+                    raw_path,
+                    trial="1",
+                    workload="AlexNet",
+                    toolchain="PyTorch-Chipyard",
+                    phase="simulation",
+                    simulator="spike",
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

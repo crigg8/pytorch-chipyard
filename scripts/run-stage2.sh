@@ -53,6 +53,11 @@ Options:
   --skip-firesim        Skip FireSim execution/collection.
   --skip-table2         Skip the Table 2 PyTorch-Chipyard/TVM-Gemmini
                         measurement workflow.
+  --only-table2         Skip ordinary Stage 2 workloads and complete only the
+                        Table 2 run started by Docker Stage 1.
+  --table2-models=LIST  Limit Table 2 completion to selected CNNs.
+                        Default: alexnet,squeezenet,mobilenetv2,resnet50.
+  --table2-repeats=N    Must match the Docker Stage 1 trial count. Default: 1.
   -h, --help            Show this help.
 
 Environment:
@@ -79,6 +84,9 @@ skip_package=0
 skip_images=0
 skip_firesim=0
 skip_table2=0
+only_table2=0
+table2_models="alexnet,squeezenet,mobilenetv2,resnet50"
+table2_repeats="${TABLE2_REPEATS:-1}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -179,6 +187,28 @@ while [[ "$#" -gt 0 ]]; do
       skip_table2=1
       shift
       ;;
+    --only-table2)
+      only_table2=1
+      shift
+      ;;
+    --table2-models=*)
+      table2_models="${1#*=}"
+      shift
+      ;;
+    --table2-models)
+      [[ "$#" -ge 2 ]] || die "--table2-models requires a value"
+      table2_models="$2"
+      shift 2
+      ;;
+    --table2-repeats=*)
+      table2_repeats="${1#*=}"
+      shift
+      ;;
+    --table2-repeats)
+      [[ "$#" -ge 2 ]] || die "--table2-repeats requires a value"
+      table2_repeats="$2"
+      shift 2
+      ;;
     --skip-plot)
       log "ignoring deprecated --skip-plot; plotting now lives in scripts/run-plot.sh"
       shift
@@ -199,6 +229,17 @@ alias_first_selected=0
 if [[ "${only_alias_first}" -eq 1 && "${only_alias_first_cnn_off}" -eq 1 ]]; then
   die "--only-alias-first and --only-alias-first-cnn-off are mutually exclusive"
 fi
+if [[ "${only_table2}" -eq 1 && "${skip_table2}" -eq 1 ]]; then
+  die "--only-table2 cannot be combined with --skip-table2"
+fi
+if [[ "${only_table2}" -eq 1 && \
+      ( "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 || \
+        "${#workload_args[@]}" -gt 0 || "${resume_firesim}" -eq 1 || \
+        -n "${resume_from_arg}" ) ]]; then
+  die "--only-table2 cannot be combined with workload or ordinary FireSim selection options"
+fi
+[[ "${table2_repeats}" =~ ^[1-9][0-9]*$ ]] || \
+  die "--table2-repeats must be a positive integer"
 if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; then
   alias_first_selected=1
   [[ "${#workload_args[@]}" -eq 0 ]] || \
@@ -232,11 +273,19 @@ fi
 # Table 2 is a complete cross-toolchain experiment, not per-workload
 # post-processing. Do not unexpectedly launch it after a selective Stage 2 run
 # or when the caller explicitly disabled FireSim.
-if [[ "${#workload_args[@]}" -gt 0 || "${skip_firesim}" -eq 1 ]]; then
+if [[ "${#workload_args[@]}" -gt 0 || \
+      ( "${skip_firesim}" -eq 1 && "${only_table2}" -eq 0 ) ]]; then
   if [[ "${skip_table2}" -eq 0 ]]; then
     log "skipping Table 2 after a selective or --skip-firesim Stage 2 run"
   fi
   skip_table2=1
+fi
+
+if [[ "${only_table2}" -eq 1 ]]; then
+  skip_elves=1
+  skip_package=1
+  skip_images=1
+  skip_firesim=1
 fi
 
 if [[ -n "${chipyard_env_arg}" ]]; then
@@ -263,10 +312,23 @@ if [[ "${skip_table2}" -eq 0 ]]; then
   table2_script="${REPO_ROOT}/run_table2.sh"
   table2_results_tool="${SCRIPT_DIR}/table2_results.py"
   table2_tvm_ae_root="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
+  table2_stage1_output="${TABLE2_STAGE1_OUTPUT_DIR:-${REPO_ROOT}/results/table2/stage1-latest}"
   [[ -f "${table2_script}" ]] || die "missing Table 2 runner: ${table2_script}"
   [[ -f "${table2_results_tool}" ]] || die "missing Table 2 results tool: ${table2_results_tool}"
   [[ -f "${table2_tvm_ae_root}/scripts/env.sh" ]] || \
     die "missing TVM-Gemmini AE environment: ${table2_tvm_ae_root}/scripts/env.sh; set TABLE2_TVM_AE_ROOT or pass --skip-table2"
+  [[ -s "${table2_stage1_output}/raw.csv" ]] || \
+    die "missing Docker Stage 1 Table 2 results: ${table2_stage1_output}/raw.csv; rerun Stage 1 without --skip-table2"
+  IFS=',' read -r -a table2_model_list <<<"${table2_models}"
+  for table2_model in "${table2_model_list[@]}"; do
+    table2_model="${table2_model//[[:space:]]/}"
+    [[ -n "${table2_model}" ]] || continue
+    for ((table2_trial = 1; table2_trial <= table2_repeats; table2_trial++)); do
+      table2_model_spec="${table2_stage1_output}/artifacts/pytorch-chipyard/${table2_model}/trial-${table2_trial}/gemmini/model_spec.json"
+      [[ -s "${table2_model_spec}" ]] || \
+        die "missing Docker Stage 1 Table 2 artifact: ${table2_model_spec}"
+    done
+  done
 fi
 
 build_elves_args=()
@@ -329,8 +391,12 @@ if [[ "${skip_firesim}" -eq 0 ]]; then
 fi
 
 if [[ "${skip_table2}" -eq 0 ]]; then
-  log "reproducing Table 2 PyTorch-Chipyard/TVM-Gemmini measurements"
-  bash "${REPO_ROOT}/run_table2.sh"
+  log "completing Table 2 from Docker Stage 1 compile measurements"
+  bash "${REPO_ROOT}/run_table2.sh" \
+    --resume \
+    --models="${table2_models}" \
+    --repeats="${table2_repeats}" \
+    --output-dir="${table2_stage1_output}"
 fi
 
 log "done; run bash scripts/run-plot.sh to generate figures"
