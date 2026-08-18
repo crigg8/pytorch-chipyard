@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import table2_results
 
 
-SPEC = Path(__file__).resolve().parents[1] / "benchmarks" / "table2-kernels.json"
 KERNEL_ID = "resnet50_classifier"
 
 
@@ -53,7 +52,7 @@ class TestTable2Results(unittest.TestCase):
         )
 
     def summary_row(self, raw_path: Path, output_path: Path) -> dict[str, str]:
-        table2_results.summarize(raw_path, SPEC, output_path)
+        table2_results.summarize(raw_path, output_path)
         with output_path.open(newline="") as csv_file:
             rows = list(csv.DictReader(csv_file))
         return next(row for row in rows if row["kernel_id"] == KERNEL_ID)
@@ -200,7 +199,7 @@ class TestTable2Results(unittest.TestCase):
                 phase="compile",
                 wall="1.25",
             )
-            table2_results.summarize(raw_path, SPEC, summary_path)
+            table2_results.summarize(raw_path, summary_path)
             table2_results.write_latex(summary_path, output_path)
             text = output_path.read_text()
             self.assertIn(r"1.2\,s", text)

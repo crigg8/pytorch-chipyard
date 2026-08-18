@@ -54,8 +54,8 @@ Options:
   --skip-table2         Skip the sampled-kernel Table 2 workflow.
   --only-table2         Skip ordinary Stage 2 workloads and complete only the
                         Table 2 run started by Docker Stage 1.
-  --table2-kernels=LIST Limit Table 2 to selected kernel IDs from
-                        benchmarks/table2-kernels.json. Default: all three.
+  --table2-kernels=LIST Limit Table 2 to selected built-in kernel IDs.
+                        Default: all three.
   --table2-repeats=N    Must match the Docker Stage 1 trial count. Default: 1.
   -h, --help            Show this help.
 

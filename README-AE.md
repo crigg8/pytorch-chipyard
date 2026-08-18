@@ -51,9 +51,9 @@ docker run --rm -it \
 ```
 
 Stage 1 compiles the paper workloads and records PyTorch-Chipyard's Docker-side
-compile measurements for the three sampled Table 2 kernels. The samples are
-listed in `benchmarks/table2-kernels.json` and are derived from SqueezeNet,
-ResNet-50, and AlexNet.
+compile measurements for three sampled Table 2 kernels derived from SqueezeNet,
+ResNet-50, and AlexNet. Their fixed definitions are maintained by
+`scripts/table2_results.py`.
 
 ## 3. Run Stage 2
 

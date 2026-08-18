@@ -10,6 +10,7 @@ import os
 import pathlib
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
 import time
@@ -22,6 +23,11 @@ import tvm
 import tvm.contrib.gemmini as gemmini
 from tvm import relay
 from tvm.micro.testing.utils import create_header_file
+
+
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+from table2_results import get_kernel
 
 
 SEED = 2027
@@ -100,23 +106,9 @@ class DenseModel(tf.Module):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--kernel", required=True)
-    parser.add_argument("--spec", type=pathlib.Path, required=True)
     parser.add_argument("--output-dir", type=pathlib.Path, required=True)
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
-
-
-def load_kernel(path: pathlib.Path, kernel_id: str) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    matches = [entry for entry in data.get("kernels", []) if entry.get("id") == kernel_id]
-    if len(matches) != 1:
-        choices = ", ".join(entry.get("id", "?") for entry in data.get("kernels", []))
-        raise SystemExit(f"unknown kernel {kernel_id!r}; expected one of: {choices}")
-    kernel = matches[0]
-    macs = int(kernel["m"]) * int(kernel["n"]) * int(kernel["k"])
-    if macs != int(kernel["macs"]):
-        raise SystemExit(f"invalid MAC count for {kernel_id}: {kernel['macs']} != {macs}")
-    return kernel
 
 
 def build_tflite(kernel: dict[str, Any]) -> bytes:
@@ -196,9 +188,8 @@ int main(void) {{
 
 def main() -> None:
     args = parse_args()
-    spec_path = args.spec.resolve()
     output_dir = args.output_dir.resolve()
-    kernel = load_kernel(spec_path, args.kernel)
+    kernel = get_kernel(args.kernel)
     target_metadata = load_gemmini_target()
     if output_dir.exists():
         if not args.force:

@@ -9,13 +9,12 @@ usage() {
   printf '%s\n' \
     'Usage: bash scripts/run-table2-kernel-compile.sh --kernel=ID --artifact-dir=PATH' \
     '' \
-    'Compile one benchmark/table2-kernels.json entry with the normal bounded' \
+    'Compile one built-in Table 2 kernel with the normal bounded' \
     'TorchInductor autotuning set. Gemmini max autotune is forced off.'
 }
 
 kernel=""
 artifact_dir=""
-spec="${REPO_ROOT}/benchmarks/table2-kernels.json"
 force_recompile=0
 
 while [[ "$#" -gt 0 ]]; do
@@ -24,8 +23,6 @@ while [[ "$#" -gt 0 ]]; do
     --kernel) [[ "$#" -ge 2 ]] || pc_usage_error "--kernel requires a value"; kernel="$2"; shift 2 ;;
     --artifact-dir=*) artifact_dir="${1#*=}"; shift ;;
     --artifact-dir) [[ "$#" -ge 2 ]] || pc_usage_error "--artifact-dir requires a value"; artifact_dir="$2"; shift 2 ;;
-    --spec=*) spec="${1#*=}"; shift ;;
-    --spec) [[ "$#" -ge 2 ]] || pc_usage_error "--spec requires a value"; spec="$2"; shift 2 ;;
     --force-recompile) force_recompile=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) pc_usage_error "unknown argument '$1'" ;;
@@ -34,7 +31,6 @@ done
 
 [[ -n "${kernel}" ]] || pc_usage_error "--kernel is required"
 [[ -n "${artifact_dir}" ]] || pc_usage_error "--artifact-dir is required"
-[[ -f "${spec}" ]] || pc_die "kernel specification not found: ${spec}"
 
 pc_prepare_environment
 export TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE=0
@@ -44,4 +40,4 @@ if [[ "${force_recompile}" -eq 1 ]]; then
   rm -f -- "$(pc_compile_stamp_path "${artifact_dir}")"
 fi
 pc_run_compile_once gemmini "${artifact_dir}" "table2-${kernel}" \
-  "${REPO_ROOT}/examples/table2-kernel.py" --kernel "${kernel}" --spec "${spec}"
+  "${REPO_ROOT}/examples/table2-kernel.py" --kernel "${kernel}"

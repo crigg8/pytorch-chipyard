@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd -P)"
 RESULTS_TOOL="${SCRIPT_DIR}/table2_results.py"
-SPEC="${REPO_ROOT}/benchmarks/table2-kernels.json"
 
 log() { printf '[table2] %s\n' "$*"; }
 warn() { printf '[table2][warn] %s\n' "$*" >&2; }
@@ -22,7 +21,7 @@ The measurements characterize each tool's own workflow and are not a kernel
 performance comparison.
 
 Options:
-  --kernels=LIST       Kernel IDs from benchmarks/table2-kernels.json (default: all)
+  --kernels=LIST       Built-in Table 2 kernel IDs (default: all)
   --toolchains=LIST    pytorch,tvm (default: both)
   --phases=LIST        compile,rtl (default: both)
   --repeats=N          Independent trials; report successful medians (default: 1)
@@ -69,8 +68,8 @@ else
   die "python is required for ${RESULTS_TOOL}"
 fi
 
-mapfile -t ALL_KERNELS < <("${RESULTS_PYTHON}" "${RESULTS_TOOL}" list-kernels --spec "${SPEC}")
-[[ "${#ALL_KERNELS[@]}" -gt 0 ]] || die "no kernels found in ${SPEC}"
+mapfile -t ALL_KERNELS < <("${RESULTS_PYTHON}" "${RESULTS_TOOL}" list-kernels)
+[[ "${#ALL_KERNELS[@]}" -gt 0 ]] || die "no built-in Table 2 kernels found"
 kernels_arg="$(IFS=,; printf '%s' "${ALL_KERNELS[*]}")"
 toolchains_arg="pytorch,tvm"
 phases_arg="compile,rtl"
@@ -169,7 +168,7 @@ fi
 
 kernel_field() {
   "${RESULTS_PYTHON}" "${RESULTS_TOOL}" kernel-field \
-    --spec "${SPEC}" --kernel "$1" --field "$2"
+    --kernel "$1" --field "$2"
 }
 
 already_passed() {
@@ -238,7 +237,7 @@ run_pytorch_compile() {
     return
   fi
   run_logged "${log_path}" bash "${SCRIPT_DIR}/run-table2-kernel-compile.sh" \
-    --kernel "${kernel}" --spec "${SPEC}" --artifact-dir "${artifact}" --force-recompile
+    --kernel "${kernel}" --artifact-dir "${artifact}" --force-recompile
   if [[ "${RUN_RC}" -eq 0 ]] && wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
     status=PASS
   else
@@ -281,7 +280,7 @@ run_tvm_compile() {
     TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}" \
     TABLE2_TVM_BUILD_DIR="${tvm_build_dir}" \
     bash "${SCRIPT_DIR}/tvm-gemmini-table2/compile-kernel.sh" \
-    --kernel "${kernel}" --spec "${SPEC}" --output-dir "${artifact}" "${force[@]}"
+    --kernel "${kernel}" --output-dir "${artifact}" "${force[@]}"
   if [[ "${RUN_RC}" -eq 0 ]] && wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
     status=PASS
   else
@@ -431,7 +430,7 @@ run_pytorch_rtl() {
   if [[ "${RUN_RC}" -eq 0 && -s "${output_bin}" ]]; then
     cp -f "${output_bin}" "${artifact}/output.bin"
     run_logged "${log_path}.validate" bash "${SCRIPT_DIR}/validate-table2-kernel.sh" \
-      --kernel "${kernel}" --spec "${SPEC}" --artifact-dir "${artifact}"
+      --kernel "${kernel}" --artifact-dir "${artifact}"
   elif [[ "${RUN_RC}" -eq 0 ]]; then
     warn "FireSim did not collect ${output_bin}"
     RUN_RC=1
@@ -479,7 +478,7 @@ for ((trial = 1; trial <= repeats; trial++)); do
 done
 
 "${RESULTS_PYTHON}" "${RESULTS_TOOL}" summarize \
-  --csv "${raw_csv}" --spec "${SPEC}" --output "${summary_csv}"
+  --csv "${raw_csv}" --output "${summary_csv}"
 "${RESULTS_PYTHON}" "${RESULTS_TOOL}" latex \
   --summary "${summary_csv}" --output "${latex_rows}"
 

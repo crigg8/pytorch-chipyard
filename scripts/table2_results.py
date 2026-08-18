@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import re
 import statistics
 from datetime import datetime, timezone
@@ -28,24 +27,74 @@ SUMMARY_FIELDS = [
 ]
 
 
-def load_spec(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if data.get("schema_version") != 1 or not isinstance(data.get("kernels"), list):
-        raise SystemExit(f"invalid kernel specification: {path}")
+TABLE2_EXPERIMENT: dict[str, Any] = {
+    "purpose": (
+        "Bounded cycle-accurate turnaround experiment; not an "
+        "inference-performance comparison."
+    ),
+    "selection_policy": (
+        "One operation from each of three evaluated CNNs, restricted to "
+        "2-4.1 million MACs so that the Verilator reference remains feasible."
+    ),
+    "kernels": [
+        {
+            "id": "squeezenet_fire2_squeeze",
+            "label": "SqueezeNet fire2 squeeze",
+            "source_model": "SqueezeNet 1.1",
+            "source_operation": "fire2 squeeze 1x1 convolution lowered to GEMM",
+            "m": 3025,
+            "n": 16,
+            "k": 64,
+            "macs": 3097600,
+        },
+        {
+            "id": "resnet50_classifier",
+            "label": "ResNet-50 classifier",
+            "source_model": "ResNet-50",
+            "source_operation": "final fully connected layer",
+            "m": 1,
+            "n": 1000,
+            "k": 2048,
+            "macs": 2048000,
+        },
+        {
+            "id": "alexnet_classifier",
+            "label": "AlexNet classifier",
+            "source_model": "AlexNet",
+            "source_operation": "final fully connected layer",
+            "m": 1,
+            "n": 1000,
+            "k": 4096,
+            "macs": 4096000,
+        },
+    ],
+}
+
+
+def table2_kernels() -> list[dict[str, Any]]:
+    kernels = TABLE2_EXPERIMENT["kernels"]
     seen: set[str] = set()
-    for kernel in data["kernels"]:
+    for kernel in kernels:
         kernel_id = kernel.get("id")
         if not kernel_id or kernel_id in seen:
-            raise SystemExit(f"missing or duplicate kernel id in {path}: {kernel_id!r}")
+            raise SystemExit(f"missing or duplicate built-in kernel id: {kernel_id!r}")
         seen.add(kernel_id)
         computed = int(kernel["m"]) * int(kernel["n"]) * int(kernel["k"])
         if computed != int(kernel["macs"]):
             raise SystemExit(f"incorrect MAC count for {kernel_id}: {kernel['macs']} != {computed}")
-    return data
+    return kernels
 
 
-def kernel_map(path: Path) -> dict[str, dict[str, Any]]:
-    return {kernel["id"]: kernel for kernel in load_spec(path)["kernels"]}
+def kernel_map() -> dict[str, dict[str, Any]]:
+    return {kernel["id"]: kernel for kernel in table2_kernels()}
+
+
+def get_kernel(kernel_id: str) -> dict[str, Any]:
+    kernel = kernel_map().get(kernel_id)
+    if kernel is None:
+        choices = ", ".join(item["id"] for item in table2_kernels())
+        raise SystemExit(f"unknown kernel {kernel_id!r}; expected one of: {choices}")
+    return kernel
 
 
 def format_float(value: float | None) -> str:
@@ -117,11 +166,11 @@ def measurement_rows(
     ]
 
 
-def summarize(raw_path: Path, spec_path: Path, output_path: Path) -> None:
+def summarize(raw_path: Path, output_path: Path) -> None:
     with raw_path.open(newline="") as csv_file:
         active_rows = latest_rows(list(csv.DictReader(csv_file)))
     summaries: list[dict[str, str]] = []
-    for kernel in load_spec(spec_path)["kernels"]:
+    for kernel in table2_kernels():
         rows = [row for row in active_rows if row["kernel_id"] == kernel["id"]]
         pc_compile = measurement_rows(rows, "PyTorch-Chipyard", "compile", "")
         firesim = measurement_rows(rows, "PyTorch-Chipyard", "rtl", "firesim")
@@ -247,15 +296,12 @@ def parser() -> argparse.ArgumentParser:
     append.add_argument("--notes", default="")
     summary = commands.add_parser("summarize")
     summary.add_argument("--csv", required=True)
-    summary.add_argument("--spec", required=True)
     summary.add_argument("--output", required=True)
     latex = commands.add_parser("latex")
     latex.add_argument("--summary", required=True)
     latex.add_argument("--output", required=True)
-    kernels = commands.add_parser("list-kernels")
-    kernels.add_argument("--spec", required=True)
+    commands.add_parser("list-kernels")
     field = commands.add_parser("kernel-field")
-    field.add_argument("--spec", required=True)
     field.add_argument("--kernel", required=True)
     field.add_argument("--field", required=True)
     extract = commands.add_parser("extract")
@@ -280,15 +326,15 @@ def main() -> None:
     elif args.command == "append":
         append_row(args)
     elif args.command == "summarize":
-        summarize(Path(args.csv), Path(args.spec), Path(args.output))
+        summarize(Path(args.csv), Path(args.output))
     elif args.command == "latex":
         write_latex(Path(args.summary), Path(args.output))
     elif args.command == "list-kernels":
-        for kernel in load_spec(Path(args.spec))["kernels"]:
+        for kernel in table2_kernels():
             print(kernel["id"])
     elif args.command == "kernel-field":
-        kernel = kernel_map(Path(args.spec)).get(args.kernel)
-        if kernel is None or args.field not in kernel:
+        kernel = get_kernel(args.kernel)
+        if args.field not in kernel:
             raise SystemExit(f"unknown kernel/field: {args.kernel}/{args.field}")
         print(kernel[args.field])
     elif args.command == "extract":

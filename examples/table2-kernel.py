@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -17,11 +17,13 @@ import torch._inductor.config as inductor_config
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-DEFAULT_SPEC = REPO_ROOT / "benchmarks" / "table2-kernels.json"
 DEFAULT_ARTIFACT_ROOT = SCRIPT_DIR / "artifact-table2-kernels"
 DTYPE = torch.float32
 SEED = 2027
 VALIDATE_ATOL = 1e-3
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from table2_results import get_kernel
 
 
 class SingleMatmul(torch.nn.Module):
@@ -41,21 +43,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--compile", action="store_true")
     mode.add_argument("--validate", action="store_true")
     parser.add_argument("--kernel", required=True)
-    parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
     return parser.parse_args()
-
-
-def load_kernel(path: Path, kernel_id: str) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    matches = [entry for entry in data.get("kernels", []) if entry.get("id") == kernel_id]
-    if len(matches) != 1:
-        choices = ", ".join(entry.get("id", "?") for entry in data.get("kernels", []))
-        raise SystemExit(f"unknown kernel {kernel_id!r}; expected one of: {choices}")
-    kernel = matches[0]
-    expected_macs = int(kernel["m"]) * int(kernel["n"]) * int(kernel["k"])
-    if int(kernel["macs"]) != expected_macs:
-        raise SystemExit(f"invalid MAC count for {kernel_id}: {kernel['macs']} != {expected_macs}")
-    return kernel
 
 
 def artifact_dir(kernel_id: str) -> Path:
@@ -154,7 +142,7 @@ def validate_kernel(kernel: dict[str, Any], path: Path) -> None:
 
 def main() -> None:
     args = parse_args()
-    kernel = load_kernel(args.spec.resolve(), args.kernel)
+    kernel = get_kernel(args.kernel)
     path = artifact_dir(str(kernel["id"]))
     if args.compile:
         compile_kernel(kernel, path)

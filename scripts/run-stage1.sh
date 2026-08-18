@@ -30,8 +30,8 @@ Options:
   --skip-table2             Skip Docker-side Table 2 kernel compile timing.
   --only-table2             Run only the Docker-side Table 2 kernel compile
                             measurements and save artifacts for Stage 2.
-  --table2-kernels=LIST     Limit Table 2 to selected kernel IDs from
-                            benchmarks/table2-kernels.json. Default: all three.
+  --table2-kernels=LIST     Limit Table 2 to selected built-in kernel IDs.
+                            Default: all three.
   --table2-repeats=N        Table 2 compile trials. Default: 1.
   --only-alias-first        Compile only the Figure 6(c) alias-first ablation:
                             CNN alias-first off plus LLM alias-first on/off,
