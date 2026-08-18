@@ -212,7 +212,9 @@ scripts/.matplotlib/
 scripts/figures/results-workload/
 scripts/figures/*.pdf
 scripts/figures/*.png
+scripts/figures/*.csv
 scripts/figures/.plot_results_start
+results/table2/
 
 # Ruff stuff:
 .ruff_cache/

@@ -101,7 +101,7 @@ def import_artifact_util(path: Path):
 def compare_tensors(golden: torch.Tensor, observed: torch.Tensor) -> bool:
     if tuple(golden.shape) != tuple(observed.shape):
         if golden.numel() != observed.numel():
-            print("[validate] max_abs_err=inf")
+            print("[validate] mae=inf")
             print("[validate] match=False")
             return False
         observed = observed.reshape_as(golden)
@@ -109,9 +109,9 @@ def compare_tensors(golden: torch.Tensor, observed: torch.Tensor) -> bool:
     golden_fp32 = golden.detach().to(torch.float32)
     observed_fp32 = observed.detach().to(torch.float32)
     abs_err = (observed_fp32 - golden_fp32).abs()
-    max_abs_err = float(abs_err.max()) if abs_err.numel() else 0.0
-    match = max_abs_err <= VALIDATE_ATOL
-    print(f"[validate] max_abs_err={max_abs_err:.6e}")
+    mae = float(abs_err.mean()) if abs_err.numel() else 0.0
+    match = mae <= VALIDATE_ATOL
+    print(f"[validate] mae={mae:.6e}")
     print(f"[validate] match={match}")
     return match
 

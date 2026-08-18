@@ -33,8 +33,8 @@ MODEL_LABELS = {
     "pythia": "Pythia-160M",
 }
 OUTPUTS = {
-    "opt": "flex_prefill_opt.pdf",
-    "pythia": "flex_prefill_pythia.pdf",
+    "opt": "fig12a.pdf",
+    "pythia": "fig12b.pdf",
 }
 
 TOKENS = [256, 512, 768, 1024]

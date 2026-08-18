@@ -19,7 +19,7 @@ from plot_style import legend_box_kwargs, size_cm, style_legend_frame
 
 CSV_PATH = ROOT_DIR / ".csv" / "alias_first_ablation.csv"
 FIGURE_DIR = ROOT_DIR / "figures"
-OUT_STEM = "alias_first_ablation"
+OUT_STEM = "fig6c"
 
 WIDTH_CM = 8.6
 HEIGHT_CM = 4.4
@@ -76,7 +76,6 @@ def main() -> None:
             "xtick.labelsize": 5.8,
             "ytick.labelsize": 5.8,
             "legend.fontsize": 5.5,
-            "hatch.linewidth": 0.35,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
         }
@@ -85,7 +84,7 @@ def main() -> None:
     frame = load_results()
     x = frame["order"].to_numpy(dtype=float)
     x[x >= 4] += 0.35
-    width = 0.30
+    width = 0.26
 
     fig, ax = plt.subplots(figsize=size_cm(WIDTH_CM, HEIGHT_CM), dpi=300)
     fig.subplots_adjust(left=0.145, right=0.99, top=0.78, bottom=0.30)
@@ -97,7 +96,6 @@ def main() -> None:
         color="#7B3294",
         edgecolor="black",
         linewidth=0.45,
-        hatch="//",
         label="Alias-first off",
         zorder=3,
     )
@@ -108,14 +106,13 @@ def main() -> None:
         color="#F2C12E",
         edgecolor="black",
         linewidth=0.45,
-        hatch="\\\\",
         label="Alias-first on",
         zorder=3,
     )
 
     upper = max(1.5, float(frame["speedup"].max()) * 1.18)
     ax.set_ylim(0.0, upper)
-    ax.set_ylabel("Normalized performance\n(higher is better)", labelpad=1.0)
+    ax.set_ylabel("Norm. Perf.", labelpad=1.0)
     ax.set_xticks(x)
     ax.set_xticklabels(
         frame["label"], rotation=25, ha="right", rotation_mode="anchor"

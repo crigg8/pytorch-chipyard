@@ -101,6 +101,45 @@ class TestAliasFirstAblation(unittest.TestCase):
         baseline = next(row for row in rows if row["model"] == "opt")
         self.assertEqual(baseline["total_kernel_cycles_avg"], "50")
 
+    def test_rvv_diagnostic_run_does_not_replace_canonical_cnn_result(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_csv_dir = plot_inputs.CSV_DIR
+            plot_inputs.CSV_DIR = Path(tmpdir)
+            try:
+                runs = [
+                    self._run("mobilenetv2-rvv-2core", 100.0),
+                    self._run("mobilenetv2-rvv-nohazard-2core", 200.0),
+                ]
+                path = plot_inputs.write_cnn_result_csv(runs)
+            finally:
+                plot_inputs.CSV_DIR = original_csv_dir
+
+            with path.open(newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+        mobile = next(
+            row
+            for row in rows
+            if row["variant"] == "baseline"
+            and row["device"] == "Saturn"
+            and row["model"] == "MobileNet"
+        )
+        self.assertEqual(mobile["2 Saturn"], "100")
+
+    def test_alias_run_does_not_supply_attention_baseline(self):
+        alias_only = [
+            self._run("opt-gemmini-sdpa-256tok-alias-first-off-4core", 200.0)
+        ]
+        self.assertIsNone(
+            plot_inputs.attention_run(alias_only, "opt", 256, "sdpa", host="rocket")
+        )
+
+        canonical = self._run("opt-rocket-gemmini-sdpa-256tok-4core", 50.0)
+        selected = plot_inputs.attention_run(
+            alias_only + [canonical], "opt", 256, "sdpa", host="rocket"
+        )
+        self.assertIs(selected, canonical)
+
     @staticmethod
     def _run(workload: str, cycles: float) -> plot_inputs.WorkloadRun:
         model, tags, core, tokens = plot_inputs.parse_workload_name(workload)

@@ -411,11 +411,19 @@ infer_hw_config() {
   elif contains_tag "${workload}" "rvv"; then
     case "${core}" in
       1) printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic" ;;
-      2) printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_2core_no_nic" ;;
+      2)
+        if [[ "${workload}" == "mobilenetv2-rvv-2core" ]]; then
+          # The fixed MobileNetV2 two-thread ELF is validated with workers on
+          # harts 2-3 of the physical four-hart 30 MHz target.
+          printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic_30mhz"
+        else
+          printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_2core_no_nic"
+        fi
+        ;;
       4)
-        # Every four-thread RVV workload uses the same eight-hart target.
-        # Harts 4-7 stay free, avoiding the kernel/OpenMP contention observed
-        # when all four harts of the otherwise identical target are occupied.
+        # Every four-thread RVV workload uses the validated eight-hart target.
+        # Worker placement is supplied by the packaged runner; MobileNetV2
+        # uses harts 0-3 and the other validated CNNs use harts 4-7.
         printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_8core_no_nic_30mhz"
         ;;
       *) die "no RVV hardware config mapping for ${workload}" ;;
@@ -543,6 +551,45 @@ copy_if_present() {
   fi
 
   return 1
+}
+
+capture_packaged_workload_metadata() {
+  local workload="$1"
+  local dest="$2"
+  local overlay runner elf image
+
+  overlay="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}"
+  runner="$(find "${overlay}" -type f -name "run_${workload}.sh" -print -quit 2>/dev/null || true)"
+  elf="$(find "${overlay}" -type f -name 'model-*core.elf' -print -quit 2>/dev/null || true)"
+  image="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}.img"
+
+  [[ -n "${runner}" ]] && copy_if_present "${runner}" "${dest}/packaged-runner.sh" || true
+  [[ -n "${elf}" ]] && sha256sum "${elf}" >"${dest}/packaged-elf.sha256" || true
+  copy_if_present "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json" \
+    "${dest}/firemarshal-workload.json" || true
+  copy_if_present "${FIRESIM_WORKLOAD_DIR}/${workload}.json" \
+    "${dest}/firesim-workload.json" || true
+
+  {
+    printf 'workload=%s\n' "${workload}"
+    [[ -n "${elf}" ]] && stat -c 'packaged_elf=%n mtime=%y size=%s' "${elf}"
+    [[ -n "${runner}" ]] && stat -c 'packaged_runner=%n mtime=%y size=%s' "${runner}"
+    [[ -f "${image}" ]] && stat -c 'firemarshal_image=%n mtime=%y size=%s' "${image}"
+  } >"${dest}/packaged-files.txt"
+}
+
+capture_firesim_artifact_hashes() {
+  local dest="$1"
+  local artifacts=()
+
+  while IFS= read -r -d '' artifact; do
+    artifacts+=("${artifact}")
+  done < <(find "${FIRESIM_RUNS_DIR}" -maxdepth 2 -type f \
+    \( -name firesim.tar.gz -o -name driver-bundle.tar.gz \) -print0 2>/dev/null | sort -z)
+
+  if [[ "${#artifacts[@]}" -gt 0 ]]; then
+    sha256sum "${artifacts[@]}" >"${dest}/firesim-artifacts.sha256"
+  fi
 }
 
 uart_has_repeated_corruption() {
@@ -696,6 +743,7 @@ archive_failed_attempt() {
   local workload="$1"
   local attempt="$2"
   local marker="$3"
+  local runtime="${4:-}"
   local dest result_dir uart slot
 
   dest="${PYTORCH_CHIPYARD_LOG_DIR}/failed-attempts/${workload}/attempt-${attempt}"
@@ -704,10 +752,18 @@ archive_failed_attempt() {
   result_dir="$(latest_result_dir "${workload}" "${marker}")"
   if [[ -n "${result_dir}" ]]; then
     copy_if_present "${result_dir}/run.log" "${dest}/run.log" || true
+    copy_if_present "${result_dir}/workload-config.txt" "${dest}/workload-config.txt" || true
+    copy_if_present "${result_dir}/HW_CFG_SUMMARY" "${dest}/HW_CFG_SUMMARY" || true
     if [[ -f "${result_dir}/uartlog" ]]; then
       tail -c 4194304 "${result_dir}/uartlog" >"${dest}/uartlog.tail"
     fi
   fi
+
+  [[ -n "${runtime}" ]] && copy_if_present "${runtime}" "${dest}/config_runtime.yaml" || true
+  copy_if_present "${FIRESIM_HWDB_PATH}" "${dest}/config_hwdb.yaml" || true
+  copy_if_present "${FIRESIM_BUILD_RECIPES_PATH}" "${dest}/config_build_recipes.yaml" || true
+  capture_packaged_workload_metadata "${workload}" "${dest}"
+  capture_firesim_artifact_hashes "${dest}"
 
   while IFS= read -r -d '' uart; do
     slot="$(basename "$(dirname "${uart}")")"
@@ -773,6 +829,7 @@ validate_workload_result() {
 collect_workload_result() {
   local workload="$1"
   local marker="${2:-}"
+  local runtime="${3:-}"
   local result_dir dest log_dest copied=0 validation_status=0
 
   result_dir="$(latest_result_dir "${workload}" "${marker}")"
@@ -790,6 +847,13 @@ collect_workload_result() {
 
   copy_if_present "${result_dir}/run.log" "${dest}/run.log" || true
   copy_if_present "${result_dir}/uartlog" "${dest}/uartlog" || true
+  copy_if_present "${result_dir}/workload-config.txt" "${dest}/workload-config.txt" || true
+  copy_if_present "${result_dir}/HW_CFG_SUMMARY" "${dest}/HW_CFG_SUMMARY" || true
+  [[ -n "${runtime}" ]] && copy_if_present "${runtime}" "${dest}/config_runtime.yaml" || true
+  copy_if_present "${FIRESIM_HWDB_PATH}" "${dest}/config_hwdb.yaml" || true
+  copy_if_present "${FIRESIM_BUILD_RECIPES_PATH}" "${dest}/config_build_recipes.yaml" || true
+  capture_packaged_workload_metadata "${workload}" "${dest}"
+  capture_firesim_artifact_hashes "${dest}"
 
   if copy_if_present "${result_dir}/model.log" "${dest}/model.log"; then
     cp -f "${result_dir}/model.log" "${log_dest}/${workload}-model.log"
@@ -852,7 +916,7 @@ run_workload() {
       run_firesim_workload_monitored "${workload}" "${runtime}" || status=$?
     fi
 
-    collect_workload_result "${workload}" "${marker}" || collect_status=$?
+    collect_workload_result "${workload}" "${marker}" "${runtime}" || collect_status=$?
     if [[ "${status}" -eq 0 && "${collect_status}" -ne 0 ]]; then
       status="${collect_status}"
     fi
@@ -958,7 +1022,7 @@ for workload in "${WORKLOADS[@]}"; do
     else
       status=$?
     fi
-    archive_failed_attempt "${workload}" "${attempt}" "${marker}"
+    archive_failed_attempt "${workload}" "${attempt}" "${marker}" "${runtime}"
     if contains_tag "${workload}" "rvv" && [[ "${status}" -eq 70 ]]; then
       if [[ "${RVV_PANIC_RETRIES}" == "unlimited" || \
           "${attempt}" -le "${RVV_PANIC_RETRIES}" ]]; then

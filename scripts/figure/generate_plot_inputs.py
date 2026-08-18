@@ -249,6 +249,21 @@ def cnn_device_and_column(run: WorkloadRun) -> tuple[str, str] | None:
     return None
 
 
+def is_canonical_cnn_variant(run: WorkloadRun, variant: str) -> bool:
+    """Reject diagnostic/ablation runs from the paper's baseline CNN cells."""
+    tags = set(run.tags)
+    if "rvv" in tags:
+        return variant == "baseline" and tags == {"rvv"}
+    if "gemmini" in tags:
+        expected = {"gemmini", "im2col"} if variant == "im2col" else {"gemmini"}
+        return tags == expected
+    if "scalar" in tags:
+        return variant == "baseline" and tags == {"scalar"}
+    if "rocket" in tags:
+        return variant == "baseline" and tags == {"rocket"}
+    return False
+
+
 def write_cnn_result_csv(runs: list[WorkloadRun]) -> Path:
     columns = [
         "variant",
@@ -278,6 +293,8 @@ def write_cnn_result_csv(runs: list[WorkloadRun]) -> Path:
             continue
         model = CNN_MODEL_ALIASES[run.model]
         variant = "im2col" if has_tag(run, "im2col") else "baseline"
+        if not is_canonical_cnn_variant(run, variant):
+            continue
         device_column = cnn_device_and_column(run)
         if device_column is None:
             continue
@@ -414,6 +431,8 @@ def attention_run(
 ) -> WorkloadRun | None:
     def predicate(run: WorkloadRun) -> bool:
         if run.model != model or run.tokens != tokens or not has_tag(run, attention):
+            return False
+        if has_tag(run, "alias") and has_tag(run, "first"):
             return False
         if host == "boom":
             return has_tag(run, "boom")

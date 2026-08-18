@@ -207,7 +207,7 @@ def main() -> None:
     fig.subplots_adjust(**ROCKET_ADJUST)
     draw_rocket(ax, df, x)
     apply_compact_style(fig, ax, x, "Norm. Perf.")
-    out_path = FIGURE_DIR / "cnn_result_rocket.pdf"
+    out_path = FIGURE_DIR / "fig7a.pdf"
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
     print(f"Saved: {out_path}")
     plt.close(fig)
@@ -219,7 +219,7 @@ def main() -> None:
     fig.subplots_adjust(**BACKEND_ADJUST)
     draw_backend(ax, df, x, "Saturn", SATURN_CONFIGS, "2 Saturn")
     apply_compact_style(fig, ax, x, None)
-    out_path = FIGURE_DIR / "cnn_result_saturn.pdf"
+    out_path = FIGURE_DIR / "fig7b.pdf"
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
     print(f"Saved: {out_path}")
     plt.close(fig)
@@ -231,7 +231,7 @@ def main() -> None:
     fig.subplots_adjust(**BACKEND_ADJUST)
     draw_backend(ax, df, x, "Gemmini", GEMMINI_CONFIGS, "Dual Gemmini")
     apply_compact_style(fig, ax, x, None)
-    out_path = FIGURE_DIR / "cnn_result_gemmini.pdf"
+    out_path = FIGURE_DIR / "fig7c.pdf"
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
     print(f"Saved: {out_path}")
     plt.close(fig)

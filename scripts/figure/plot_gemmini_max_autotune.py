@@ -30,7 +30,7 @@ WORKSPACE_DIR = ROOT_DIR.parent
 LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examples" / ".logs"))
 
 LOG_GLOB = "*gemmini-max-autotune*4core-autotune.log"
-OUT_STEM = "autotune_gemmini_max"
+OUT_STEM = "fig10"
 
 BASELINE_BLOCKING = (64, 64, 32)
 BLACK = "#111111"

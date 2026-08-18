@@ -23,6 +23,8 @@ Run the Stage 2 host workflow in order:
   2. Package FireMarshal and FireSim workload files.
   3. Build/install FireMarshal images.
   4. Run FireSim workloads and collect results.
+  5. Reproduce Table 2 host-wall measurements for PyTorch-Chipyard and
+     TVM-Gemmini when running the complete, non-selective workflow.
 
 Options:
   --riscv-toolchain-dir=PATH
@@ -30,7 +32,7 @@ Options:
                         riscv64-unknown-linux-gnu-g++.
   --riscv-gxx=PATH      Exact riscv64-unknown-linux-gnu-g++ path.
   --workload=LIST       Run selected FireSim workload(s). May be repeated.
-  --only-alias-first    Build the Figure 5(c) ablation artifacts and limit
+  --only-alias-first    Build the Figure 6(c) ablation artifacts and limit
                         image generation and FireSim execution to 4 CNN
                         Gemmini 4-core off workloads and 8 LLM seq=256 SDPA
                         Gemmini 4-core on/off workloads.
@@ -49,6 +51,8 @@ Options:
   --skip-package        Skip FireMarshal workload/package generation.
   --skip-images         Skip FireMarshal image build/install.
   --skip-firesim        Skip FireSim execution/collection.
+  --skip-table2         Skip the Table 2 PyTorch-Chipyard/TVM-Gemmini
+                        measurement workflow.
   -h, --help            Show this help.
 
 Environment:
@@ -56,6 +60,8 @@ Environment:
   derives CHIPYARD_ENV_PATH as $CHIPYARD_DIR/env.sh.
   PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS defaults to 0 so existing collected
   results and logs are preserved. Set it to 1 to clean them before FireSim runs.
+  TABLE2_TVM_AE_ROOT points to the prepared TVM-Gemmini AE tree. It defaults to
+  /home/ae/tvm-gemmini-ae on the author review server.
 EOF
 }
 
@@ -72,6 +78,7 @@ skip_elves=0
 skip_package=0
 skip_images=0
 skip_firesim=0
+skip_table2=0
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -168,6 +175,10 @@ while [[ "$#" -gt 0 ]]; do
       skip_firesim=1
       shift
       ;;
+    --skip-table2)
+      skip_table2=1
+      shift
+      ;;
     --skip-plot)
       log "ignoring deprecated --skip-plot; plotting now lives in scripts/run-plot.sh"
       shift
@@ -215,7 +226,17 @@ if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; the
   for workload in "${alias_first_workloads[@]}"; do
     workload_args+=("--workload=${workload}")
   done
-  log "selected Figure 5(c) alias-first ablation: ${#alias_first_workloads[@]} workloads"
+  log "selected Figure 6(c) alias-first ablation: ${#alias_first_workloads[@]} workloads"
+fi
+
+# Table 2 is a complete cross-toolchain experiment, not per-workload
+# post-processing. Do not unexpectedly launch it after a selective Stage 2 run
+# or when the caller explicitly disabled FireSim.
+if [[ "${#workload_args[@]}" -gt 0 || "${skip_firesim}" -eq 1 ]]; then
+  if [[ "${skip_table2}" -eq 0 ]]; then
+    log "skipping Table 2 after a selective or --skip-firesim Stage 2 run"
+  fi
+  skip_table2=1
 fi
 
 if [[ -n "${chipyard_env_arg}" ]]; then
@@ -237,6 +258,16 @@ source "${SCRIPT_DIR}/env.sh"
 set -u
 
 cd "${REPO_ROOT}"
+
+if [[ "${skip_table2}" -eq 0 ]]; then
+  table2_script="${REPO_ROOT}/run_table2.sh"
+  table2_results_tool="${SCRIPT_DIR}/table2_results.py"
+  table2_tvm_ae_root="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
+  [[ -f "${table2_script}" ]] || die "missing Table 2 runner: ${table2_script}"
+  [[ -f "${table2_results_tool}" ]] || die "missing Table 2 results tool: ${table2_results_tool}"
+  [[ -f "${table2_tvm_ae_root}/scripts/env.sh" ]] || \
+    die "missing TVM-Gemmini AE environment: ${table2_tvm_ae_root}/scripts/env.sh; set TABLE2_TVM_AE_ROOT or pass --skip-table2"
+fi
 
 build_elves_args=()
 if [[ -n "${chipyard_env_arg}" ]]; then
@@ -295,6 +326,11 @@ if [[ "${skip_firesim}" -eq 0 ]]; then
   fi
   log "running FireSim workloads"
   bash "${SCRIPT_DIR}/run-firesim-workloads.sh" "${firesim_args[@]}"
+fi
+
+if [[ "${skip_table2}" -eq 0 ]]; then
+  log "reproducing Table 2 PyTorch-Chipyard/TVM-Gemmini measurements"
+  bash "${REPO_ROOT}/run_table2.sh"
 fi
 
 log "done; run bash scripts/run-plot.sh to generate figures"

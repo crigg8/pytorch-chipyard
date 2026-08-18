@@ -123,14 +123,17 @@ complete flow.
 
 Stage 2 uses the Stage 1 artifacts, such as `runner.cpp`, `weights.bin`,
 `input.bin`, and staged kernel objects, to build `model.elf` files. It then
-generates FireMarshal workloads and runs them through FireSim. This stage
-requires the local FPGA host setup described above.
+generates FireMarshal workloads and runs them through FireSim. A complete,
+non-selective Stage 2 run also reproduces Table 2 by measuring fresh
+PyTorch-Chipyard and TVM-Gemmini compilation, Spike, and FireSim host-wall
+times. This stage requires the local FPGA host setup described above.
 
 ```bash
 # Author review server setting.
 export CHIPYARD_DIR=/home/hongjun/hk_chipyard/chipyard
 export PYTORCH_CHIPYARD_FPGA_DB=/opt/firesim-db0.json
 export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR=/home/hongjun/miniforge3/pkgs/riscv-tools-1.0.3-0_h1234567_ga1b1b14/riscv-tools
+export TABLE2_TVM_AE_ROOT=/home/ae/tvm-gemmini-ae
 
 # For other hosts, replace the author review Chipyard path above:
 # export CHIPYARD_DIR=/path/to/chipyard
@@ -152,6 +155,44 @@ bash scripts/run-stage2.sh
 bash scripts/run-plot.sh
 ```
 
+The default `run-stage2.sh` command runs Table 2 after the ordinary Stage 2
+workloads finish. Its paper-facing result is
+`scripts/figures/table2.csv`; the same file is archived as
+`results/table2/<UTC-run-id>/table2.csv`. `raw.csv`, command logs, and the
+per-trial artifacts are stored beside the archived file. Table 2 is a table
+rather than a PDF figure, so `run-plot.sh` does not transform this CSV.
+
+Table 2 compares this repository with a separately prepared TVM-Gemmini AE
+tree. The author review server already provides that tree at the path above.
+On another host, prepare the equivalent TVM-Gemmini environment and point
+`TABLE2_TVM_AE_ROOT` at its root. The tree must contain `scripts/env.sh`, the
+AE-local model ports, TVM build, RISC-V tools, and Gemmini-compatible Spike
+described by that artifact. Stage 2 checks this prerequisite before starting a
+full run, rather than failing after the FPGA experiments have completed. Use
+`--skip-table2` only when intentionally reproducing the other paper results
+without Table 2.
+
+Selective Stage 2 commands (`--workload`, `--only-alias-first`, or
+`--only-alias-first-cnn-off`) and `--skip-firesim` do not launch the unrelated
+full Table 2 matrix. The exact Table 2 workflow can also be rerun independently
+with `bash run_table2.sh`; the default matrix covers all four CNN models, both
+toolchains, and the compile, Spike, and FireSim phases.
+
+`run-plot.sh` names generated plots by their location in the paper:
+
+| Paper panel | Output |
+| --- | --- |
+| Figure 6(a), 6(b), 6(c) | `fig6a.pdf`, `fig6b.pdf`, `fig6c.pdf` |
+| Figure 7(a), 7(b), 7(c) | `fig7a.pdf`, `fig7b.pdf`, `fig7c.pdf` |
+| Figure 8(a), 8(b) | `fig8a.pdf`, `fig8b.pdf` |
+| Figure 9(a), 9(b), 9(c) | `fig9a.pdf`, `fig9b.pdf`, `fig9c.pdf` |
+| Figure 10 | `fig10.pdf` |
+| Figure 12(a), 12(b), 12(c) | `fig12a.pdf`, `fig12b.pdf`, `fig12c.pdf` |
+
+All of these files are written under `scripts/figures/`. Figure 11 is the
+FlexAttention pseudocode typeset directly in the paper and therefore has no
+plot-script output.
+
 RVV workloads are monitored while FireSim is running. If UART reports a kernel
 panic, kernel Oops, or the known repeated-byte corruption, Stage 2 runs
 `firesim kill`, preserves the last 4 MiB of the failed UART under
@@ -160,6 +201,9 @@ panic, kernel Oops, or the known repeated-byte corruption, Stage 2 runs
 same workload from `launchrunfarm`/`infrasetup` until it succeeds. Set a finite
 limit with `--rvv-panic-retries=N` (use `0` to disable retries). Other guest or
 FireSim failures still stop Stage 2 immediately.
+
+Generated FireSim runtime configurations enable `host_debug.zero_out_dram` by
+default so every workload starts from cleared target DRAM.
 
 The paper's BOOM+Gemmini FlexAttention comparison uses OPT at sequence lengths
 256, 512, 768, and 1024. Its 1-core workloads run only the first compiled
@@ -180,8 +224,8 @@ to the fp32x8x8 Gemmini Rocket 4-core hardware configuration. CNN OFF cases are
 packaged as `<model>-gemmini-alias-first-off-4core`; their existing ordinary
 `<model>-gemmini-4core` results supply the ON values. Use `--only-alias-first`
 to build and execute the four CNN OFF and eight LLM ON/OFF workloads. The
-plotting stage writes `alias_first_ablation.csv` and
-`alias_first_ablation.{pdf,png}` using alias-first OFF as the normalized 1.0
+plotting stage writes `alias_first_ablation.csv` and `fig6c.{pdf,png}` using
+alias-first OFF as the normalized 1.0
 baseline. To regenerate only this panel, run `scripts/run-plot.sh
 --only-alias-first`. If the LLM runs are already complete, use
 `--only-alias-first-cnn-off` with Stage 1 and Stage 2 to generate and run only
@@ -191,13 +235,19 @@ the four missing CNN OFF cases.
 
 ## Saturn RVV Kernel Workaround
 
-The FireMarshal Linux kernel used by the artifact has a local workaround in
-`$CHIPYARD_DIR/software/firemarshal/boards/default/linux/arch/riscv/kernel/traps.c`.
-The `jseo` comment in `do_trap_ecall_u()` disables
-`riscv_v_vstate_discard(regs)` because the Saturn target can intermittently
-lose `sstatus.VS` while running the LMUL=8 syscall discard sequence and raise
-an illegal-instruction exception at `vmv.v.i v24, -1`. Vector context
-save/restore during task switches remains enabled.
+The FireMarshal Linux kernel used by the artifact has local workarounds in
+`$CHIPYARD_DIR/software/firemarshal/boards/default/linux/arch/riscv/kernel/traps.c`
+and `arch/riscv/include/asm/vector.h`. The `jseo` comment in
+`do_trap_ecall_u()` disables `riscv_v_vstate_discard(regs)` because the Saturn
+target can intermittently lose `sstatus.VS` while running the LMUL=8 syscall
+discard sequence and raise an illegal-instruction exception at
+`vmv.v.i v24, -1`.
+
+The artifact also leaves vector state resident on each hart instead of running
+the LMUL=8 vector save/restore sequence during task switches. This AE-only
+policy relies on the generated RVV workload pinning one userspace RVV thread to
+each hart. Do not run another userspace RVV task on those harts or allow an RVV
+workload thread to migrate between harts.
 
 This is a Linux kernel change, so every FireMarshal image that runs an RVV
 workload must be rebuilt. Stage 2 performs that rebuild. It does not require

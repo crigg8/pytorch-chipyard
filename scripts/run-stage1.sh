@@ -27,7 +27,7 @@ Options:
   --skip-sdpa               Skip default SDPA LLM workloads.
   --skip-flex-attn          Skip flash/window attention LLM workloads.
   --skip-gemmini-autotune   Skip gemmini-max-autotune.
-  --only-alias-first        Compile only the Figure 5(c) alias-first ablation:
+  --only-alias-first        Compile only the Figure 6(c) alias-first ablation:
                             CNN alias-first off plus LLM alias-first on/off,
                             all using Gemmini and 4 cores.
   --only-alias-first-cnn-off

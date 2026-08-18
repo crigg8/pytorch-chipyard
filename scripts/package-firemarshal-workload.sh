@@ -43,6 +43,13 @@ Environment:
   PYTORCH_CHIPYARD_FIREMARSHAL_ROOTFS_SIZE  FireMarshal rootfs-size. Default: 8GiB.
   PYTORCH_CHIPYARD_WORKLOAD_DIR             FireMarshal workload output directory.
   FIRESIM_WORKLOAD_DIR                      FireSim deploy workload output directory.
+  PYTORCH_CHIPYARD_OMP_FIRST_CPU_<WORKLOAD>
+                                            Override the first OpenMP CPU for one
+                                            workload. Hyphens become underscores.
+  PYTORCH_CHIPYARD_OMP_WAIT_POLICY_<WORKLOAD>
+                                            Override ACTIVE/PASSIVE for one workload.
+  PYTORCH_CHIPYARD_GOMP_SPINCOUNT_<WORKLOAD>
+                                            Override a count/INFINITE for one workload.
 EOF
 }
 
@@ -67,6 +74,15 @@ validate_name() {
 validate_size() {
   local value="$1"
   [[ "${value}" =~ ^[A-Za-z0-9._+-]+$ ]] || die "invalid rootfs size: ${value}"
+}
+
+env_suffix_for_workload() {
+  local workload="$1"
+  local suffix
+
+  suffix="${workload^^}"
+  suffix="${suffix//[^A-Z0-9_]/_}"
+  printf '%s\n' "${suffix}"
 }
 
 shell_quote() {
@@ -366,22 +382,24 @@ discover_artifact_elf_paths() {
 
 omp_places_for() {
   local core="$1"
+  local first_cpu="${2:-0}"
   local places=""
   local i
 
   for ((i = 0; i < core; i++)); do
-    places+="${places:+,}{${i}}"
+    places+="${places:+,}{$((first_cpu + i))}"
   done
   printf '%s\n' "${places}"
 }
 
 omp_cpu_affinity_for() {
   local core="$1"
+  local first_cpu="${2:-0}"
   local affinity=""
   local i
 
   for ((i = 0; i < core; i++)); do
-    affinity+="${affinity:+ }${i}"
+    affinity+="${affinity:+ }$((first_cpu + i))"
   done
   printf '%s\n' "${affinity}"
 }
@@ -393,10 +411,11 @@ write_workload() {
   local workload_name="$4"
 
   local elf_base core kind guest_root guest_root_rel
-  local input_path input_base weights_path
+  local input_path input_base weights_path elf_sha256 input_sha256 weights_sha256
   local workload_dir deploy_workload_dir overlay_dir guest_dir runner_path hook_path
-  local workload_json deploy_json places cpu_affinity model_command
-  local omp_wait_policy gomp_spincount
+  local workload_json deploy_json workload_config_path places cpu_affinity model_command
+  local omp_first_cpu omp_wait_policy omp_display_affinity gomp_spincount
+  local workload_env_suffix omp_first_cpu_var omp_wait_policy_var gomp_spincount_var
   local seq_len expect_output_bin runner_check_files output_entries kernel_only=0
 
   elf_base="$(basename "${elf_path}")"
@@ -410,6 +429,10 @@ write_workload() {
 
   weights_path="${artifact_dir}/weights.bin"
   require_file "${weights_path}"
+
+  elf_sha256="$(sha256sum "${elf_path}" | awk '{print $1}')"
+  input_sha256="$(sha256sum "${input_path}" | awk '{print $1}')"
+  weights_sha256="$(sha256sum "${weights_path}" | awk '{print $1}')"
 
   kind="$(workload_kind_for "${artifact_dir}")"
   guest_root="$(guest_root_for "${kind}")"
@@ -429,6 +452,7 @@ write_workload() {
   hook_path="${overlay_dir}/firemarshal.sh"
   workload_json="${workload_dir}/${workload_name}.json"
   deploy_json="${deploy_workload_dir}/${workload_name}.json"
+  workload_config_path="${guest_dir}/workload-config.txt"
 
   mkdir -p "${guest_dir}" "${deploy_workload_dir}" "$(dirname "${runner_path}")"
 
@@ -447,18 +471,94 @@ write_workload() {
   fi
   chmod +x "${guest_dir}/${elf_base}" 2>/dev/null || true
 
-  places="$(omp_places_for "${core}")"
-  cpu_affinity="$(omp_cpu_affinity_for "${core}")"
+  omp_first_cpu=0
   omp_wait_policy=PASSIVE
+  omp_display_affinity=FALSE
   gomp_spincount=0
   if [[ "${workload_name}" == *-rvv-* ]]; then
     # Keep RVV workers resident instead of repeatedly entering the kernel's
-    # OpenMP wait/wake path. This is the policy used by the successful
-    # four-thread ResNet run on the eight-hart target.
+    # OpenMP wait/wake path. This is the default policy validated by the
+    # successful four-thread AlexNet run on the eight-hart target.
     omp_wait_policy=ACTIVE
     gomp_spincount=INFINITE
+
+    case "${workload_name}" in
+      mobilenetv2-rvv-2core)
+        # This two-thread ELF faults when it saturates the physical two-hart
+        # target. It is validated on the four-hart 30 MHz target with the
+        # workers isolated from harts 0-1.
+        omp_first_cpu=2
+        ;;
+      mobilenetv2-rvv-4core)
+        # MobileNetV2's validated four-thread placement is harts 0-3 on the
+        # eight-hart 30 MHz target.
+        omp_first_cpu=0
+        omp_display_affinity=TRUE
+        ;;
+      *)
+        if [[ "${core}" -eq 4 ]]; then
+          # Other four-thread RVV workloads use harts 4-7 on the eight-hart
+          # target, leaving harts 0-3 for kernel and housekeeping work.
+          omp_first_cpu=4
+          omp_display_affinity=TRUE
+        fi
+        ;;
+    esac
   fi
+
+  workload_env_suffix="$(env_suffix_for_workload "${workload_name}")"
+  omp_first_cpu_var="PYTORCH_CHIPYARD_OMP_FIRST_CPU_${workload_env_suffix}"
+  omp_wait_policy_var="PYTORCH_CHIPYARD_OMP_WAIT_POLICY_${workload_env_suffix}"
+  gomp_spincount_var="PYTORCH_CHIPYARD_GOMP_SPINCOUNT_${workload_env_suffix}"
+
+  if [[ -n "${!omp_first_cpu_var:-}" ]]; then
+    omp_first_cpu="${!omp_first_cpu_var}"
+  fi
+  if [[ -n "${!omp_wait_policy_var:-}" ]]; then
+    omp_wait_policy="${!omp_wait_policy_var}"
+  fi
+  if [[ -n "${!gomp_spincount_var:-}" ]]; then
+    gomp_spincount="${!gomp_spincount_var}"
+  fi
+
+  [[ "${omp_first_cpu}" =~ ^[0-9]+$ ]] || \
+    die "invalid ${omp_first_cpu_var}='${omp_first_cpu}'; expected a non-negative integer"
+  [[ "${omp_wait_policy}" == "ACTIVE" || "${omp_wait_policy}" == "PASSIVE" ]] || \
+    die "invalid ${omp_wait_policy_var}='${omp_wait_policy}'; expected ACTIVE or PASSIVE"
+  [[ "${gomp_spincount}" == "INFINITE" || "${gomp_spincount}" =~ ^[0-9]+$ ]] || \
+    die "invalid ${gomp_spincount_var}='${gomp_spincount}'; expected a non-negative integer or INFINITE"
+
+  places="$(omp_places_for "${core}" "${omp_first_cpu}")"
+  cpu_affinity="$(omp_cpu_affinity_for "${core}" "${omp_first_cpu}")"
   model_command="$(shell_quote "./${elf_base}") $(shell_quote "${input_base}") weights.bin output.bin"
+
+  cat >"${workload_config_path}" <<EOF
+workload=${workload_name}
+artifact_dir=${artifact_dir}
+elf_source=${elf_path}
+elf_sha256=${elf_sha256}
+input_source=${input_path}
+input_sha256=${input_sha256}
+weights_source=${weights_path}
+weights_sha256=${weights_sha256}
+rootfs_size=${rootfs_size}
+OMP_NUM_THREADS=${core}
+OMP_THREAD_LIMIT=${core}
+OMP_STACKSIZE=64M
+OMP_DYNAMIC=false
+OMP_MAX_ACTIVE_LEVELS=1
+OMP_NESTED=false
+OMP_PROC_BIND=close
+OMP_PLACES=${places}
+OMP_SCHEDULE=static
+OMP_WAIT_POLICY=${omp_wait_policy}
+OMP_DISPLAY_ENV=FALSE
+OMP_DISPLAY_AFFINITY=${omp_display_affinity}
+GOMP_CPU_AFFINITY=${cpu_affinity}
+GOMP_SPINCOUNT=${gomp_spincount}
+MALLOC_ARENA_MAX=1
+EOF
+
   expect_output_bin=1
   if [[ "${kernel_only}" -eq 1 ]]; then
     model_command+=" --kernel-only=flex_attention --no-output"
@@ -472,16 +572,18 @@ write_workload() {
   fi
 
   if [[ "${expect_output_bin}" -eq 1 ]]; then
-    runner_check_files="output.bin run.log model.log autotune.log"
+    runner_check_files="output.bin run.log model.log autotune.log workload-config.txt"
     output_entries="    \"${guest_root}/${workload_name}/output.bin\",
     \"${guest_root}/${workload_name}/run.log\",
     \"${guest_root}/${workload_name}/model.log\",
-    \"${guest_root}/${workload_name}/autotune.log\""
+    \"${guest_root}/${workload_name}/autotune.log\",
+    \"${guest_root}/${workload_name}/workload-config.txt\""
   else
-    runner_check_files="run.log model.log autotune.log"
+    runner_check_files="run.log model.log autotune.log workload-config.txt"
     output_entries="    \"${guest_root}/${workload_name}/run.log\",
     \"${guest_root}/${workload_name}/model.log\",
-    \"${guest_root}/${workload_name}/autotune.log\""
+    \"${guest_root}/${workload_name}/autotune.log\",
+    \"${guest_root}/${workload_name}/workload-config.txt\""
   fi
 
   cat >"${runner_path}" <<EOF
@@ -510,7 +612,7 @@ export OMP_PLACES="${places}"
 export OMP_SCHEDULE=static
 export OMP_WAIT_POLICY=${omp_wait_policy}
 export OMP_DISPLAY_ENV=FALSE
-export OMP_DISPLAY_AFFINITY=FALSE
+export OMP_DISPLAY_AFFINITY=${omp_display_affinity}
 export GOMP_CPU_AFFINITY="${cpu_affinity}"
 export GOMP_SPINCOUNT=${gomp_spincount}
 export MALLOC_ARENA_MAX=1
@@ -522,6 +624,7 @@ exec >./run.log 2>&1
 
 echo "[runner] start ${workload_name}"
 echo "[runner] OMP_NUM_THREADS=\${OMP_NUM_THREADS} OMP_THREAD_LIMIT=\${OMP_THREAD_LIMIT} OMP_STACKSIZE=\${OMP_STACKSIZE} OMP_DYNAMIC=\${OMP_DYNAMIC} OMP_MAX_ACTIVE_LEVELS=\${OMP_MAX_ACTIVE_LEVELS} OMP_NESTED=\${OMP_NESTED} OMP_PROC_BIND=\${OMP_PROC_BIND} OMP_PLACES=\${OMP_PLACES} OMP_SCHEDULE=\${OMP_SCHEDULE} OMP_WAIT_POLICY=\${OMP_WAIT_POLICY} GOMP_CPU_AFFINITY=\${GOMP_CPU_AFFINITY} GOMP_SPINCOUNT=\${GOMP_SPINCOUNT} MALLOC_ARENA_MAX=\${MALLOC_ARENA_MAX}"
+echo "[runner] elf_sha256=${elf_sha256}"
 ${model_command}
 rc=\$?
 echo "[runner] model_ret=\${rc}"
