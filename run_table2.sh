@@ -61,6 +61,8 @@ Environment:
   TABLE2_TVM_FIRESIM_HW_CONFIG      Default: default INT8 Gemmini Rocket, 1 core
   TABLE2_TVM_MANAGE_LLVM=0          Do not temporarily rebuild TVM with LLVM
   TABLE2_KEEP_GOING=0               Stop scheduling work after the first failure
+  TABLE2_RESULTS_PYTHON             Python used for the CSV helper. Defaults to
+                                    python, then python3.
   TABLE2_PYTORCH_COMPILE_CONTEXT    Provenance label stored with PyTorch compile
                                     rows (Stage 1 sets this to docker-stage1)
   PYTORCH_CHIPYARD_CONDA_ENV        PyTorch-Chipyard conda env (default:
@@ -86,6 +88,16 @@ repeats="${TABLE2_REPEATS:-1}"
 output_dir=""
 dry_run=0
 resume=0
+
+if [[ -n "${TABLE2_RESULTS_PYTHON:-}" ]]; then
+  results_python="${TABLE2_RESULTS_PYTHON}"
+elif command -v python >/dev/null 2>&1; then
+  results_python="$(command -v python)"
+elif command -v python3 >/dev/null 2>&1; then
+  results_python="$(command -v python3)"
+else
+  die "neither python nor python3 is available for ${RESULTS_TOOL}"
+fi
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -172,7 +184,7 @@ paper_table_csv="${TABLE2_REPO_ROOT}/scripts/figures/table2.csv"
 if [[ "${resume}" -eq 1 && ! -s "${raw_csv}" ]]; then
   die "cannot resume without an existing raw.csv: ${raw_csv}"
 fi
-python "${RESULTS_TOOL}" init --csv "${raw_csv}"
+"${results_python}" "${RESULTS_TOOL}" init --csv "${raw_csv}"
 
 account_env="${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}"
 if [[ -f "${account_env}" ]]; then
@@ -240,8 +252,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 record() {
-  python "${RESULTS_TOOL}" append --csv "${raw_csv}" --run-id "${run_id}" "$@"
-  python "${RESULTS_TOOL}" summarize --csv "${raw_csv}" --output "${table_csv}"
+  "${results_python}" "${RESULTS_TOOL}" append --csv "${raw_csv}" --run-id "${run_id}" "$@"
+  "${results_python}" "${RESULTS_TOOL}" summarize --csv "${raw_csv}" --output "${table_csv}"
 }
 
 LAST_RC=0
@@ -284,7 +296,7 @@ measurement_passed() {
   local phase="$4"
   local simulator="${5:-}"
   [[ "${resume}" -eq 1 && "${dry_run}" -eq 0 ]] || return 1
-  python "${RESULTS_TOOL}" has-pass --csv "${raw_csv}" \
+  "${results_python}" "${RESULTS_TOOL}" has-pass --csv "${raw_csv}" \
     --trial "${trial}" --workload "$(display_model "${model}")" \
     --toolchain "$(display_toolchain "${toolchain}")" \
     --phase "${phase}" --simulator "${simulator}"
@@ -312,8 +324,8 @@ pc_compile() {
   run_logged_timed "${log_path}" bash "${TABLE2_REPO_ROOT}/scripts/run-cnn.sh" \
     --backend=gemmini --model="${model}" --artifact-dir="${artifact}"
   if [[ "${LAST_RC}" -eq 0 ]]; then
-    if wall_s="$(python "${RESULTS_TOOL}" extract --log "${log_path}" --key seconds 2>/dev/null)" && \
-        kernel_count="$(python "${RESULTS_TOOL}" count-pytorch "${artifact}/model_spec.json" 2>/dev/null)"; then
+    if wall_s="$("${results_python}" "${RESULTS_TOOL}" extract --log "${log_path}" --key seconds 2>/dev/null)" && \
+        kernel_count="$("${results_python}" "${RESULTS_TOOL}" count-pytorch "${artifact}/model_spec.json" 2>/dev/null)"; then
       status=PASS
     else
       wall_s="${LAST_WALL_S}"
@@ -388,8 +400,8 @@ tvm_compile() {
   run_logged_timed "${log_path}" tvm_compile_command "${model}" "${trial_root}"
   if [[ "${LAST_RC}" -eq 0 ]]; then
     model_dir="$(tvm_model_dir "${model}" "${trial_root}")"
-    if wall_s="$(python "${RESULTS_TOOL}" extract --log "${log_path}" --key RELAY_COMPILE_WALL_S 2>/dev/null)" && \
-        kernel_count="$(python "${RESULTS_TOOL}" count-tvm "${model_dir}" 2>/dev/null)"; then
+    if wall_s="$("${results_python}" "${RESULTS_TOOL}" extract --log "${log_path}" --key RELAY_COMPILE_WALL_S 2>/dev/null)" && \
+        kernel_count="$("${results_python}" "${RESULTS_TOOL}" count-tvm "${model_dir}" 2>/dev/null)"; then
       status=PASS
     else
       wall_s="${LAST_WALL_S}"
@@ -533,7 +545,7 @@ find_pc_firesim_log() {
   # script had to execute a missing 4-core result itself.
   for candidate in "${result_dir}/uartlog" "${result_dir}/table2-firesim.log"; do
     [[ -f "${candidate}" ]] || continue
-    if python "${RESULTS_TOOL}" extract-firesim-wall --log "${candidate}" >/dev/null 2>&1; then
+    if "${results_python}" "${RESULTS_TOOL}" extract-firesim-wall --log "${candidate}" >/dev/null 2>&1; then
       printf '%s\n' "${candidate}"
       return 0
     fi
@@ -662,7 +674,7 @@ run_firesim_measurement() {
     hw_config="${TABLE2_PYTORCH_FIRESIM_HW_CONFIG:-alveo_u250_firesim_fp8x8_gemmini_rocket_4core_no_nic}"
     cached_log="$(find_pc_firesim_log "${model}" || true)"
     if [[ -n "${cached_log}" ]]; then
-      wall_s="$(python "${RESULTS_TOOL}" extract-firesim-wall --log "${cached_log}")"
+      wall_s="$("${results_python}" "${RESULTS_TOOL}" extract-firesim-wall --log "${cached_log}")"
       log "reusing 4-core FireSim result: ${cached_log} (${wall_s}s)"
       if [[ "${dry_run}" -eq 0 ]]; then
         record --trial "${trial}" --workload "$(display_model "${model}")" \
@@ -713,7 +725,7 @@ run_firesim_measurement() {
 
   generate_firesim_runtime "${workload_name}" "${hw_config}" "${runtime}"
   run_logged_timed "${run_log}" firesim_command "${runtime}"
-  if ! wall_s="$(python "${RESULTS_TOOL}" extract --log "${run_log}" --key TABLE2_FIRESIM_WALL_S 2>/dev/null)"; then
+  if ! wall_s="$("${results_python}" "${RESULTS_TOOL}" extract --log "${run_log}" --key TABLE2_FIRESIM_WALL_S 2>/dev/null)"; then
     wall_s="${LAST_WALL_S}"
   fi
   status=PASS
@@ -802,7 +814,7 @@ for toolchain in "${toolchains[@]}"; do
   done
 done
 
-python "${RESULTS_TOOL}" summarize --csv "${raw_csv}" --output "${table_csv}"
+"${results_python}" "${RESULTS_TOOL}" summarize --csv "${raw_csv}" --output "${table_csv}"
 log "raw results : ${raw_csv}"
 log "Table 2    : ${table_csv}"
 
