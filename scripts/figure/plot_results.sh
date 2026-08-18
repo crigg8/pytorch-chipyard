@@ -34,7 +34,7 @@ Default:
 
 Options:
   --results-dir=PATH  Result directory. Default: ${RESULTS_DIR}
-  --only-alias-first  Generate only the Figure 6(c) alias-first plot.
+  --only-alias-first  Generate only the alias-first ablation plot.
   -h, --help          Show this help.
 
 Environment:

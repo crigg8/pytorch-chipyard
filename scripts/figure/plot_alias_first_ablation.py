@@ -19,7 +19,7 @@ from plot_style import legend_box_kwargs, size_cm, style_legend_frame
 
 CSV_PATH = ROOT_DIR / ".csv" / "alias_first_ablation.csv"
 FIGURE_DIR = ROOT_DIR / "figures"
-OUT_STEM = "fig6c"
+OUT_STEM = "alias_first_ablation"
 
 WIDTH_CM = 8.6
 HEIGHT_CM = 4.4
@@ -87,7 +87,7 @@ def main() -> None:
     width = 0.26
 
     fig, ax = plt.subplots(figsize=size_cm(WIDTH_CM, HEIGHT_CM), dpi=300)
-    fig.subplots_adjust(left=0.145, right=0.99, top=0.78, bottom=0.30)
+    fig.subplots_adjust(left=0.145, right=0.99, top=0.88, bottom=0.30)
 
     off_bars = ax.bar(
         x - width / 2,

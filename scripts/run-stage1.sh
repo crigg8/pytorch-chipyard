@@ -27,11 +27,11 @@ Options:
   --skip-sdpa               Skip default SDPA LLM workloads.
   --skip-flex-attn          Skip flash/window attention LLM workloads.
   --skip-gemmini-autotune   Skip gemmini-max-autotune.
-  --skip-table2             Skip Docker-side Table 2 PyTorch compile timing.
-  --only-table2             Run only the Docker-side Table 2 PyTorch compile
+  --skip-table2             Skip Docker-side Table 2 kernel compile timing.
+  --only-table2             Run only the Docker-side Table 2 kernel compile
                             measurements and save artifacts for Stage 2.
-  --table2-models=LIST      Limit --only-table2 testing to selected CNNs.
-                            Default: alexnet,squeezenet,mobilenetv2,resnet50.
+  --table2-kernels=LIST     Limit Table 2 to selected kernel IDs from
+                            benchmarks/table2-kernels.json. Default: all three.
   --table2-repeats=N        Table 2 compile trials. Default: 1.
   --only-alias-first        Compile only the Figure 6(c) alias-first ablation:
                             CNN alias-first off plus LLM alias-first on/off,
@@ -50,7 +50,7 @@ skip_flex_attn=0
 skip_gemmini_autotune=0
 skip_table2=0
 only_table2=0
-table2_models="alexnet,squeezenet,mobilenetv2,resnet50"
+table2_kernels="squeezenet_fire2_squeeze,resnet50_classifier,alexnet_classifier"
 table2_repeats="${TABLE2_REPEATS:-1}"
 only_alias_first=0
 only_alias_first_cnn_off=0
@@ -91,13 +91,13 @@ while [[ "$#" -gt 0 ]]; do
       only_table2=1
       shift
       ;;
-    --table2-models=*)
-      table2_models="${1#*=}"
+    --table2-kernels=*)
+      table2_kernels="${1#*=}"
       shift
       ;;
-    --table2-models)
-      [[ "$#" -ge 2 ]] || die "--table2-models requires a value"
-      table2_models="$2"
+    --table2-kernels)
+      [[ "$#" -ge 2 ]] || die "--table2-kernels requires a value"
+      table2_kernels="$2"
       shift 2
       ;;
     --table2-repeats=*)
@@ -206,7 +206,7 @@ if [[ "${skip_table2}" -eq 0 ]]; then
   log "measuring Table 2 PyTorch compile times inside the Stage 1 container"
   TABLE2_PYTORCH_COMPILE_CONTEXT=docker-stage1 \
     bash "${SCRIPT_DIR}/run_table2.sh" \
-    --models="${table2_models}" \
+    --kernels="${table2_kernels}" \
     --toolchains=pytorch \
     --phases=compile \
     --repeats="${table2_repeats}" \

@@ -23,8 +23,8 @@ Run the Stage 2 host workflow in order:
   2. Package FireMarshal and FireSim workload files.
   3. Build/install FireMarshal images.
   4. Run FireSim workloads and collect results.
-  5. Reproduce Table 2 host-wall measurements for PyTorch-Chipyard and
-     TVM-Gemmini when running the complete, non-selective workflow.
+  5. Complete Table 2's sampled-kernel FireSim and Verilator measurements
+     when running the complete, non-selective workflow.
 
 Options:
   --riscv-toolchain-dir=PATH
@@ -51,12 +51,11 @@ Options:
   --skip-package        Skip FireMarshal workload/package generation.
   --skip-images         Skip FireMarshal image build/install.
   --skip-firesim        Skip FireSim execution/collection.
-  --skip-table2         Skip the Table 2 PyTorch-Chipyard/TVM-Gemmini
-                        measurement workflow.
+  --skip-table2         Skip the sampled-kernel Table 2 workflow.
   --only-table2         Skip ordinary Stage 2 workloads and complete only the
                         Table 2 run started by Docker Stage 1.
-  --table2-models=LIST  Limit Table 2 completion to selected CNNs.
-                        Default: alexnet,squeezenet,mobilenetv2,resnet50.
+  --table2-kernels=LIST Limit Table 2 to selected kernel IDs from
+                        benchmarks/table2-kernels.json. Default: all three.
   --table2-repeats=N    Must match the Docker Stage 1 trial count. Default: 1.
   -h, --help            Show this help.
 
@@ -85,7 +84,7 @@ skip_images=0
 skip_firesim=0
 skip_table2=0
 only_table2=0
-table2_models="alexnet,squeezenet,mobilenetv2,resnet50"
+table2_kernels="squeezenet_fire2_squeeze,resnet50_classifier,alexnet_classifier"
 table2_repeats="${TABLE2_REPEATS:-1}"
 
 while [[ "$#" -gt 0 ]]; do
@@ -191,13 +190,13 @@ while [[ "$#" -gt 0 ]]; do
       only_table2=1
       shift
       ;;
-    --table2-models=*)
-      table2_models="${1#*=}"
+    --table2-kernels=*)
+      table2_kernels="${1#*=}"
       shift
       ;;
-    --table2-models)
-      [[ "$#" -ge 2 ]] || die "--table2-models requires a value"
-      table2_models="$2"
+    --table2-kernels)
+      [[ "$#" -ge 2 ]] || die "--table2-kernels requires a value"
+      table2_kernels="$2"
       shift 2
       ;;
     --table2-repeats=*)
@@ -321,15 +320,15 @@ if [[ "${skip_table2}" -eq 0 ]]; then
     die "missing Docker Stage 1 Table 2 results: ${table2_stage1_output}/raw.csv; rerun Stage 1 without --skip-table2"
   [[ -w "${table2_stage1_output}" && -w "${table2_stage1_output}/raw.csv" ]] || \
     die "Docker Stage 1 Table 2 results are not writable by $(id -un): ${table2_stage1_output}; repair bind-mount ownership or permissions before Stage 2"
-  IFS=',' read -r -a table2_model_list <<<"${table2_models}"
-  for table2_model in "${table2_model_list[@]}"; do
-    table2_model="${table2_model//[[:space:]]/}"
-    [[ -n "${table2_model}" ]] || continue
+  IFS=',' read -r -a table2_kernel_list <<<"${table2_kernels}"
+  for table2_kernel in "${table2_kernel_list[@]}"; do
+    table2_kernel="${table2_kernel//[[:space:]]/}"
+    [[ -n "${table2_kernel}" ]] || continue
     for ((table2_trial = 1; table2_trial <= table2_repeats; table2_trial++)); do
-      table2_model_spec="${table2_stage1_output}/artifacts/pytorch-chipyard/${table2_model}/trial-${table2_trial}/gemmini/model_spec.json"
-      [[ -s "${table2_model_spec}" ]] || \
-        die "missing Docker Stage 1 Table 2 artifact: ${table2_model_spec}"
-      table2_artifact_dir="$(dirname -- "${table2_model_spec}")"
+      table2_kernel_spec="${table2_stage1_output}/artifacts/pytorch-chipyard/${table2_kernel}/trial-${table2_trial}/gemmini/model_spec.json"
+      [[ -s "${table2_kernel_spec}" ]] || \
+        die "missing Docker Stage 1 Table 2 artifact: ${table2_kernel_spec}"
+      table2_artifact_dir="$(dirname -- "${table2_kernel_spec}")"
       [[ -w "${table2_artifact_dir}" ]] || \
         die "Docker Stage 1 artifact directory is not writable by $(id -un): ${table2_artifact_dir}"
       for table2_blob in input.bin weights.bin; do
@@ -403,7 +402,8 @@ if [[ "${skip_table2}" -eq 0 ]]; then
   log "completing Table 2 from Docker Stage 1 compile measurements"
   bash "${SCRIPT_DIR}/run_table2.sh" \
     --resume \
-    --models="${table2_models}" \
+    --build-verilator \
+    --kernels="${table2_kernels}" \
     --repeats="${table2_repeats}" \
     --output-dir="${table2_stage1_output}"
 fi

@@ -9,7 +9,8 @@ Before the AE account is handed to a reviewer, the server administrator must
 have already configured:
 
 - Chipyard/FireSim, the FPGA bitstreams, XRT/Vivado, and FPGA device access;
-- the RISC-V toolchain and the TVM-Gemmini environment used by Table 2;
+- the RISC-V toolchain and the TVM-Gemmini/Verilator environment used by
+  Table 2;
 - rootless Docker access for the AE account;
 - passwordless SSH from the AE account to `localhost` for the local run farm;
 - shared FireMarshal/FireSim output directories writable by the `firesim`
@@ -49,8 +50,10 @@ docker run --rm -it \
   bash scripts/run-stage1.sh
 ```
 
-Stage 1 compiles the paper workloads and records the Docker-side Table 2
-compile measurements.
+Stage 1 compiles the paper workloads and records PyTorch-Chipyard's Docker-side
+compile measurements for the three sampled Table 2 kernels. The samples are
+listed in `benchmarks/table2-kernels.json` and are derived from SqueezeNet,
+ResNet-50, and AlexNet.
 
 ## 3. Run Stage 2
 
@@ -64,9 +67,34 @@ cd ~/pytorch-chipyard
 bash scripts/run-stage2.sh
 ```
 
-Stage 2 builds the ELF files and FireMarshal images, runs the FireSim workloads,
-and completes Table 2. RVV guest kernel failures are retried automatically;
-other failures stop the workflow.
+Stage 2 builds the ELF files and FireMarshal images, runs the ordinary FireSim
+workloads, and completes Table 2 with PyTorch-Chipyard/FireSim and
+TVM-Gemmini/Verilator. It builds the Verilator simulator once if necessary;
+that setup cost is not included in the table. RVV guest kernel failures are
+retried automatically; other failures stop the workflow.
+
+To reproduce only the bounded Table 2 experiment, use the same Docker mount
+options as above and replace the Stage 1 command with:
+
+```bash
+bash scripts/run-stage1.sh --only-table2
+```
+
+Then run the host part with:
+
+```bash
+bash scripts/run-stage2.sh --only-table2
+```
+
+The experiment intentionally uses each tool's native target:
+PyTorch-Chipyard uses FP32, a DIM=8 Gemmini, four Rocket cores, and FireSim;
+TVM-Gemmini uses INT8, a DIM=16 Gemmini, one Rocket core, and Verilator.
+Consequently, the reported values characterize practical compile and
+cycle-accurate RTL turnaround for each workflow; they must not be interpreted
+as a cross-tool kernel-performance speedup. The TVM path compiles against the
+Gemmini headers generated for the selected Chipyard Verilator target and
+rejects a run if those headers have drifted, so the older headers vendored by
+TVM-Gemmini cannot silently mismatch the RTL simulator.
 
 ## 4. Generate the paper outputs
 
@@ -77,6 +105,7 @@ cd ~/pytorch-chipyard
 bash scripts/run-plot.sh
 ```
 
-Generated figures are written as `scripts/figures/fig*.pdf`. Table 2 is written
-as `scripts/figures/table2.csv`. Raw logs, compiler artifacts, and intermediate
-results remain under `examples/` and `results/`.
+Generated figures are written as `scripts/figures/fig*.pdf`. A complete Table 2
+run writes `scripts/figures/table2.csv` and `scripts/figures/table2_rows.tex`.
+Raw logs, target metadata, compiler artifacts, and intermediate results remain
+under `results/table2/`.
