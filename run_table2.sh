@@ -263,8 +263,9 @@ cleanup() {
   if [[ "${firesim_active}" -eq 1 && -n "${firesim_runtime}" ]]; then
     warn "terminating active FireSim run farm"
     (
+      cd "${FIRESIM_DIR}"
       set +u
-      source "${FIRESIM_DIR}/sourceme-manager.sh" >/dev/null 2>&1
+      source ./sourceme-manager.sh --skip-ssh-setup >/dev/null 2>&1
       set -u
       cd "${FIRESIM_DEPLOY_DIR}"
       firesim kill -c "${firesim_runtime}" -a "${FIRESIM_HWDB_PATH}" \
@@ -607,10 +608,35 @@ marshal_build_install() {
   local workdir="$1"
   local config="$2"
   local log_path="$3"
+  local safe_dir safe_real safe_index=0
+  local git_safe_env=()
+  # The author-review account consumes a shared, differently owned FireMarshal
+  # checkout. Trust only the nested repositories that FireMarshal hashes while
+  # building images, without changing the account's global Git configuration.
+  for safe_dir in \
+    "${FIREMARSHAL_DIR}" \
+    "${FIREMARSHAL_DIR}/wlutil/busybox" \
+    "${FIREMARSHAL_DIR}/boards/firechip/distros/br/buildroot" \
+    "${FIREMARSHAL_DIR}/boards/firechip/linux" \
+    "${FIREMARSHAL_DIR}/boards/firechip/firmware/opensbi" \
+    "${FIREMARSHAL_DIR}/boards/firechip/drivers/icenet-driver" \
+    "${FIREMARSHAL_DIR}/boards/firechip/drivers/iceblk-driver"; do
+    [[ -e "${safe_dir}/.git" ]] || continue
+    for safe_real in "${safe_dir}" "$(cd -- "${safe_dir}" >/dev/null 2>&1 && pwd -P)"; do
+      git_safe_env+=(
+        "GIT_CONFIG_KEY_${safe_index}=safe.directory"
+        "GIT_CONFIG_VALUE_${safe_index}=${safe_real}"
+      )
+      safe_index=$((safe_index + 1))
+    done
+  done
+  git_safe_env+=("GIT_CONFIG_COUNT=${safe_index}")
   (
     cd "${FIREMARSHAL_DIR}"
-    ./marshal --workdir "${workdir}" build "${config}"
-    ./marshal --workdir "${workdir}" install "${config}"
+    env PATH="${CHIPYARD_DIR}/.conda-env/bin:${PATH}" "${git_safe_env[@]}" \
+      ./marshal --workdir "${workdir}" build "${config}"
+    env PATH="${CHIPYARD_DIR}/.conda-env/bin:${PATH}" "${git_safe_env[@]}" \
+      ./marshal --workdir "${workdir}" install "${config}"
   ) >>"${log_path}" 2>&1
 }
 
@@ -741,8 +767,11 @@ EOF
 
 firesim_command() {
   local runtime="$1"
+  cd "${FIRESIM_DIR}"
   set +u
-  source "${FIRESIM_DIR}/sourceme-manager.sh"
+  # An explicit source argument prevents this function's runtime-YAML $1 from
+  # leaking into sourceme-manager.sh's own option parser.
+  source ./sourceme-manager.sh --skip-ssh-setup
   set -u
   cd "${FIRESIM_DEPLOY_DIR}"
   firesim_active=1
