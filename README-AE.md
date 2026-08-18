@@ -100,7 +100,6 @@ docker run --rm -it \
   -v "$PWD/examples:/opt/pytorch-chipyard/examples" \
   -v "$PWD/results:/opt/pytorch-chipyard/results" \
   -v pytorch-chipyard-triton-cache:/tmp/triton-chipyard-cache \
-  -v pytorch-chipyard-torch-cache:/root/.cache/torch \
   pytorch-chipyard:stage1 \
   bash scripts/run-stage1.sh
 ```
@@ -123,7 +122,6 @@ complete. To test only this path, optionally with one model, use:
 docker run --rm -it \
   -v "$PWD/results:/opt/pytorch-chipyard/results" \
   -v pytorch-chipyard-triton-cache:/tmp/triton-chipyard-cache \
-  -v pytorch-chipyard-torch-cache:/root/.cache/torch \
   pytorch-chipyard:stage1 \
   bash scripts/run-stage1.sh --only-table2 --table2-models=alexnet
 ```
