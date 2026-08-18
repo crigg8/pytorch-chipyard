@@ -205,7 +205,7 @@ if [[ "${skip_table2}" -eq 0 ]]; then
   table2_output_dir="${table2_results_root}/${table2_run_id}"
   log "measuring Table 2 PyTorch compile times inside the Stage 1 container"
   TABLE2_PYTORCH_COMPILE_CONTEXT=docker-stage1 \
-    bash "${REPO_ROOT}/run_table2.sh" \
+    bash "${SCRIPT_DIR}/run_table2.sh" \
     --models="${table2_models}" \
     --toolchains=pytorch \
     --phases=compile \

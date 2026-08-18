@@ -222,7 +222,7 @@ bash scripts/run-stage2.sh --only-table2 --table2-models=alexnet
 ```
 
 The completed default matrix covers all four CNN models, both toolchains, and
-the compile, Spike, and FireSim phases. `run_table2.sh --resume` is the lower-
+the compile, Spike, and FireSim phases. `scripts/run_table2.sh --resume` is the lower-
 level continuation interface used by Stage 2; it is not necessary in the
 normal AE command sequence.
 

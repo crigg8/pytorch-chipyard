@@ -309,7 +309,7 @@ set -u
 cd "${REPO_ROOT}"
 
 if [[ "${skip_table2}" -eq 0 ]]; then
-  table2_script="${REPO_ROOT}/run_table2.sh"
+  table2_script="${SCRIPT_DIR}/run_table2.sh"
   table2_results_tool="${SCRIPT_DIR}/table2_results.py"
   table2_tvm_ae_root="${TABLE2_TVM_AE_ROOT:-/home/ae/tvm-gemmini-ae}"
   table2_stage1_output="${TABLE2_STAGE1_OUTPUT_DIR:-${REPO_ROOT}/results/table2/stage1-latest}"
@@ -401,7 +401,7 @@ fi
 
 if [[ "${skip_table2}" -eq 0 ]]; then
   log "completing Table 2 from Docker Stage 1 compile measurements"
-  bash "${REPO_ROOT}/run_table2.sh" \
+  bash "${SCRIPT_DIR}/run_table2.sh" \
     --resume \
     --models="${table2_models}" \
     --repeats="${table2_repeats}" \

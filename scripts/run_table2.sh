@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TABLE2_REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+TABLE2_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+TABLE2_REPO_ROOT="$(cd -- "${TABLE2_SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd -P)"
 RESULTS_TOOL="${TABLE2_REPO_ROOT}/scripts/table2_results.py"
 
 log() {
@@ -20,7 +21,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  bash run_table2.sh [options]
+  bash scripts/run_table2.sh [options]
 
 Measure the four CNN rows in Table 2 for PyTorch-Chipyard and TVM-Gemmini.
 Compilation is reported both as total host wall time and wall time per generated

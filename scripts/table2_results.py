@@ -257,7 +257,7 @@ def extract_firesim_wall(path: Path) -> str:
     """Extract a successful FireSim host-wall measurement from a saved log."""
     text = path.read_text(errors="replace")
 
-    # run_table2.sh writes this marker only after a successful fallback run.
+    # scripts/run_table2.sh writes this marker only after a successful fallback run.
     marker_matches = re.findall(
         r"^TABLE2_FIRESIM_WALL_S=([0-9]+(?:\.[0-9]+)?)$", text, re.MULTILINE
     )
