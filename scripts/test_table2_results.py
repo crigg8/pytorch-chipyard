@@ -144,6 +144,45 @@ class TestTable2Results(unittest.TestCase):
                 )
             )
 
+    def test_successful_retry_supersedes_failed_attempt_in_summary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw_path = Path(temp_dir) / "raw.csv"
+            summary_path = Path(temp_dir) / "table2.csv"
+            table2_results.init_csv(raw_path)
+            base = {
+                "csv": str(raw_path),
+                "run_id": "stage1",
+                "trial": "1",
+                "workload": "AlexNet",
+                "toolchain": "PyTorch-Chipyard",
+                "phase": "simulation",
+                "simulator": "spike",
+                "kernel_count": "",
+                "artifact_path": "artifact",
+                "log_path": "log",
+                "notes": "",
+            }
+            attempts = (("FAIL", "0.1", "19"), ("PASS", "9", "0"))
+            for status, wall_s, exit_code in attempts:
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        **base,
+                        "total_wall_s": wall_s,
+                        "status": status,
+                        "exit_code": exit_code,
+                    },
+                )()
+                table2_results.append_row(args)
+
+            table2_results.summarize(raw_path, summary_path)
+            with summary_path.open(newline="") as csv_file:
+                row = next(csv.DictReader(csv_file))
+            self.assertEqual(row["status"], "PASS")
+            self.assertEqual(row["spike_wall_s"], "9.000000")
+            self.assertEqual(row["spike_trials"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

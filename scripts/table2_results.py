@@ -130,11 +130,19 @@ def summarize(raw_path: Path, output_path: Path) -> None:
     )
     summaries: list[dict[str, str]] = []
     for workload, toolchain in keys:
-        matching = [
+        matching_history = [
             row
             for row in rows
             if row["workload"] == workload and row["toolchain"] == toolchain
         ]
+        # A resumed run appends a new row for a previously failed measurement.
+        # Only the latest attempt for each trial/phase/simulator is active;
+        # otherwise an old FAIL would poison the summary after a successful
+        # retry forever.
+        latest: dict[tuple[str, str, str], dict[str, str]] = {}
+        for row in matching_history:
+            latest[(row["trial"], row["phase"], row["simulator"])] = row
+        matching = list(latest.values())
         passed = [row for row in matching if row["status"] == "PASS"]
         compile_rows = [row for row in passed if row["phase"] == "compile"]
         spike_rows = [row for row in passed if row["simulator"] == "spike"]

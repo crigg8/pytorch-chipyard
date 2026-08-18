@@ -211,6 +211,10 @@ if [[ "${skip_table2}" -eq 0 ]]; then
     --phases=compile \
     --repeats="${table2_repeats}" \
     --output-dir="${table2_output_dir}"
+  # Docker root is mapped to nobody on root-squashed bind mounts, and Torch's
+  # atomic weight-file write leaves weights.bin at mode 0600. Stage 2 runs as
+  # the host AE account and must be able to read artifacts and append results.
+  chmod -R a+rwX "${table2_output_dir}"
   mkdir -p "${table2_results_root}"
   ln -sfn "${table2_run_id}" "${table2_results_root}/stage1-latest"
   log "Table 2 Stage 1 results: ${table2_output_dir}"

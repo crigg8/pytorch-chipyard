@@ -319,6 +319,8 @@ if [[ "${skip_table2}" -eq 0 ]]; then
     die "missing TVM-Gemmini AE environment: ${table2_tvm_ae_root}/scripts/env.sh; set TABLE2_TVM_AE_ROOT or pass --skip-table2"
   [[ -s "${table2_stage1_output}/raw.csv" ]] || \
     die "missing Docker Stage 1 Table 2 results: ${table2_stage1_output}/raw.csv; rerun Stage 1 without --skip-table2"
+  [[ -w "${table2_stage1_output}" && -w "${table2_stage1_output}/raw.csv" ]] || \
+    die "Docker Stage 1 Table 2 results are not writable by $(id -un): ${table2_stage1_output}; repair bind-mount ownership or permissions before Stage 2"
   IFS=',' read -r -a table2_model_list <<<"${table2_models}"
   for table2_model in "${table2_model_list[@]}"; do
     table2_model="${table2_model//[[:space:]]/}"
@@ -327,6 +329,13 @@ if [[ "${skip_table2}" -eq 0 ]]; then
       table2_model_spec="${table2_stage1_output}/artifacts/pytorch-chipyard/${table2_model}/trial-${table2_trial}/gemmini/model_spec.json"
       [[ -s "${table2_model_spec}" ]] || \
         die "missing Docker Stage 1 Table 2 artifact: ${table2_model_spec}"
+      table2_artifact_dir="$(dirname -- "${table2_model_spec}")"
+      [[ -w "${table2_artifact_dir}" ]] || \
+        die "Docker Stage 1 artifact directory is not writable by $(id -un): ${table2_artifact_dir}"
+      for table2_blob in input.bin weights.bin; do
+        [[ -r "${table2_artifact_dir}/${table2_blob}" ]] || \
+          die "Docker Stage 1 artifact is not readable by $(id -un): ${table2_artifact_dir}/${table2_blob}; repair bind-mount ownership or permissions before Stage 2"
+      done
     done
   done
 fi

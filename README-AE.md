@@ -151,6 +151,26 @@ export PYTORCH_CHIPYARD_FPGA_DB=/opt/firesim-db0.json
 export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR=/home/hongjun/miniforge3/pkgs/riscv-tools-1.0.3-0_h1234567_ga1b1b14/riscv-tools
 export TABLE2_TVM_AE_ROOT=/home/ae/tvm-gemmini-ae
 
+# One-time author-review-server setup by an administrator. The AE account is
+# already a member of the firesim group; these shared output directories must
+# grant that group write access as well.
+sudo chgrp firesim \
+  "$CHIPYARD_DIR/sims/firesim/deploy/workloads" \
+  "$CHIPYARD_DIR/sims/firesim/deploy/logs" \
+  "$CHIPYARD_DIR/sims/firesim/deploy/results-workload" \
+  "$CHIPYARD_DIR/sims/firesim/deploy/generated-topology-diagrams" \
+  "$CHIPYARD_DIR/software/firemarshal/logs" \
+  "$CHIPYARD_DIR/software/firemarshal/images/firechip"
+sudo chmod g+rwx,g+s \
+  "$CHIPYARD_DIR/sims/firesim/deploy/workloads" \
+  "$CHIPYARD_DIR/sims/firesim/deploy/logs" \
+  "$CHIPYARD_DIR/sims/firesim/deploy/results-workload" \
+  "$CHIPYARD_DIR/sims/firesim/deploy/generated-topology-diagrams" \
+  "$CHIPYARD_DIR/software/firemarshal/logs" \
+  "$CHIPYARD_DIR/software/firemarshal/images/firechip"
+sudo chgrp firesim "$CHIPYARD_DIR/software/firemarshal/logs/.log"
+sudo chmod g+rw "$CHIPYARD_DIR/software/firemarshal/logs/.log"
+
 # For other hosts, replace the author review Chipyard path above:
 # export CHIPYARD_DIR=/path/to/chipyard
 # For other hosts, replace the author review FPGA DB path above:
@@ -162,7 +182,9 @@ export TABLE2_TVM_AE_ROOT=/home/ae/tvm-gemmini-ae
 
 source scripts/env.sh
 
-# If privileged Docker generated root-owned artifacts, fix host ownership
+# Table 2-only Stage 1 automatically makes its result tree host-readable and
+# writable. If a privileged full Docker run created other root-owned artifacts,
+# fix their host ownership before the ordinary Stage 2 workflow.
 # sudo chown -R "$USER:$USER" examples results
 
 bash scripts/run-stage2.sh
