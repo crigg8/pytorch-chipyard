@@ -80,7 +80,6 @@ export PYTORCH_CHIPYARD_RISCV_GXX="${PYTORCH_CHIPYARD_RISCV_GXX:-}"
 export MARSHAL_FIRESIM_DIR="${MARSHAL_FIRESIM_DIR:-$FIRESIM_DIR}"
 export MARSHAL_MOUNT_DIR="${MARSHAL_MOUNT_DIR:-$WORKSPACE/.firemarshal/disk-mount}"
 
-# guestmount fallback paths. The build script assumes sudo, but these keep the
-# fallback usable on hosts where libguestfs is configured for unprivileged use.
+# Writable paths for FireMarshal's unprivileged guestmount fallback.
 export LIBGUESTFS_CACHEDIR="${LIBGUESTFS_CACHEDIR:-$WORKSPACE/.firemarshal/libguestfs-cache}"
 export LIBGUESTFS_TMPDIR="${LIBGUESTFS_TMPDIR:-$WORKSPACE/.firemarshal/libguestfs-tmp}"

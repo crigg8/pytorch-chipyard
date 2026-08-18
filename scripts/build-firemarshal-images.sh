@@ -31,8 +31,9 @@ Outputs:
   $FIRESIM_WORKLOAD_DIR/<workload>.json
 
 Notes:
-  FireMarshal mounts rootfs images while applying overlays. This script assumes
-  the user can run sudo and validates credentials with sudo -v before building.
+  FireMarshal mounts rootfs images while applying overlays. It uses an allowed
+  FireSim mount helper when available and otherwise falls back to guestmount;
+  this wrapper does not require general sudo access.
 
 Options:
   --workload=NAME  Build only this workload. May be repeated or comma-separated.
@@ -104,26 +105,11 @@ if [[ "${#workload_jsons[@]}" -eq 0 ]]; then
   die "no workload JSON files found under ${PYTORCH_CHIPYARD_WORKLOAD_DIR}; run scripts/package-firemarshal-workload.sh first"
 fi
 
-log "checking sudo credentials"
-sudo -v
-
-sudo_keepalive_pid=""
-keep_sudo_alive() {
-  while true; do
-    sudo -n true >/dev/null 2>&1 || exit 0
-    sleep 60
-  done
-}
-
+marshal_cwd="$(mktemp -d "${TMPDIR%/}/marshal-cwd.XXXXXX")"
 cleanup() {
-  if [[ -n "${sudo_keepalive_pid}" ]]; then
-    kill "${sudo_keepalive_pid}" >/dev/null 2>&1 || true
-  fi
+  rmdir "${marshal_cwd}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-
-keep_sudo_alive &
-sudo_keepalive_pid="$!"
 
 log "FireMarshal dir: ${FIREMARSHAL_DIR}"
 log "workload dir: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
@@ -132,10 +118,13 @@ log "FireSim workload dir: ${FIRESIM_WORKLOAD_DIR}"
 log "cleaning/building/installing ${#workload_jsons[@]} workload(s)"
 
 (
-  cd "${FIREMARSHAL_DIR}"
-  ./marshal --workdir "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" clean "${workload_jsons[@]}"
-  ./marshal --workdir "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" build "${workload_jsons[@]}"
-  ./marshal --workdir "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" install "${workload_jsons[@]}"
+  # FireMarshal's guestmount fallback creates guestmount.pid in its current
+  # directory. Keep that transient file in an AE-owned location instead of
+  # requiring write access to the shared Chipyard source checkout.
+  cd "${marshal_cwd}"
+  "${FIREMARSHAL_DIR}/marshal" --workdir "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" clean "${workload_jsons[@]}"
+  "${FIREMARSHAL_DIR}/marshal" --workdir "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" build "${workload_jsons[@]}"
+  "${FIREMARSHAL_DIR}/marshal" --workdir "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" install "${workload_jsons[@]}"
 )
 
 log "done"

@@ -152,24 +152,21 @@ export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR=/home/hongjun/miniforge3/pkgs/riscv-
 export TABLE2_TVM_AE_ROOT=/home/ae/tvm-gemmini-ae
 
 # One-time author-review-server setup by an administrator. The AE account is
-# already a member of the firesim group; these shared output directories must
-# grant that group write access as well.
-sudo chgrp firesim \
-  "$CHIPYARD_DIR/sims/firesim/deploy/workloads" \
-  "$CHIPYARD_DIR/sims/firesim/deploy/logs" \
-  "$CHIPYARD_DIR/sims/firesim/deploy/results-workload" \
-  "$CHIPYARD_DIR/sims/firesim/deploy/generated-topology-diagrams" \
-  "$CHIPYARD_DIR/software/firemarshal/logs" \
+# already a member of the firesim group. Limit shared write access to generated
+# FireMarshal/FireSim outputs and make new descendants inherit that group.
+shared_output_dirs=(
+  "$CHIPYARD_DIR/software/firemarshal/custom_application/pytorch-chipyard-workloads"
   "$CHIPYARD_DIR/software/firemarshal/images/firechip"
-sudo chmod g+rwx,g+s \
-  "$CHIPYARD_DIR/sims/firesim/deploy/workloads" \
-  "$CHIPYARD_DIR/sims/firesim/deploy/logs" \
-  "$CHIPYARD_DIR/sims/firesim/deploy/results-workload" \
-  "$CHIPYARD_DIR/sims/firesim/deploy/generated-topology-diagrams" \
-  "$CHIPYARD_DIR/software/firemarshal/logs" \
-  "$CHIPYARD_DIR/software/firemarshal/images/firechip"
-sudo chgrp firesim "$CHIPYARD_DIR/software/firemarshal/logs/.log"
-sudo chmod g+rw "$CHIPYARD_DIR/software/firemarshal/logs/.log"
+  "$CHIPYARD_DIR/software/firemarshal/logs"
+  "$CHIPYARD_DIR/sims/firesim/deploy/workloads"
+  "$CHIPYARD_DIR/sims/firesim/deploy/logs"
+  "$CHIPYARD_DIR/sims/firesim/deploy/results-workload"
+  "$CHIPYARD_DIR/sims/firesim/deploy/generated-topology-diagrams"
+)
+sudo mkdir -p "${shared_output_dirs[@]}"
+sudo chgrp -R firesim "${shared_output_dirs[@]}"
+sudo chmod -R g+rwX "${shared_output_dirs[@]}"
+sudo find "${shared_output_dirs[@]}" -type d -exec chmod g+s {} +
 
 # For other hosts, replace the author review Chipyard path above:
 # export CHIPYARD_DIR=/path/to/chipyard
