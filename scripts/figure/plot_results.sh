@@ -125,6 +125,9 @@ log "python      : $python_path"
 
 if [[ "${only_alias_first}" -eq 1 ]]; then
   plot_scripts=(plot_alias_first_ablation.py)
+  expected_outputs=(
+    "Figure 7|alias_first_ablation.pdf"
+  )
 else
   plot_scripts=(
     plot_cnn_absolute_cycles.py
@@ -137,6 +140,23 @@ else
     plot_im2col_site_attribution.py
     plot_mobilenet_squeezenet_attribution.py
     plot_gemmini_max_autotune.py
+  )
+  expected_outputs=(
+    "Figure 6(a)|cnn_absolute_cycles.pdf"
+    "Figure 6(b)|spda_prefill_256.pdf"
+    "Figure 7|alias_first_ablation.pdf"
+    "Figure 8(a)|cnn_result_rocket.pdf"
+    "Figure 8(b)|cnn_result_saturn.pdf"
+    "Figure 8(c)|cnn_result_gemmini.pdf"
+    "Figure 9(a)|mobilenet_squeezenet_backend_attribution.pdf"
+    "Figure 9(b)|mobilenet_alexnet_scaling_attribution.pdf"
+    "Figure 10(a)|im2col_speedup.pdf"
+    "Figure 10(b)|im2col_site_attribution_resnet.pdf"
+    "Figure 10(c)|im2col_site_attribution_squeezenet.pdf"
+    "Figure 11|autotune_gemmini_max.pdf"
+    "Figure 13(a)|flex_prefill_opt.pdf"
+    "Figure 13(b)|flex_prefill_pythia.pdf"
+    "Figure 13(c)|flash_window_core_ratio.pdf"
   )
 fi
 
@@ -160,9 +180,25 @@ done < <(find "$FIGURE_DIR" -maxdepth 1 -type f \( -name '*.pdf' -o -name '*.png
 
 if [[ "$generated_count" -eq 0 ]]; then
   warn "no figure files were generated"
+  failed=1
 fi
+
+log "checking the paper figure manifest:"
+for expected in "${expected_outputs[@]}"; do
+  figure_label="${expected%%|*}"
+  figure_path="${FIGURE_DIR}/${expected#*|}"
+  if [[ ! -s "${figure_path}" || ! "${figure_path}" -nt "${marker}" ]]; then
+    warn "${figure_label} was not generated in this run: ${figure_path}"
+    failed=1
+    continue
+  fi
+  printf '[plot-results][PASS] %s=%s\n' "${figure_label}" "${figure_path}"
+done
 
 if [[ "$failed" -ne 0 ]]; then
   warn "one or more figure scripts failed; check missing CSV/log inputs above"
   exit 1
 fi
+
+printf 'PLOT_RESULTS_DIR=%s\n' "${FIGURE_DIR}"
+printf 'PLOT_RESULTS_STATUS=PASS\n'

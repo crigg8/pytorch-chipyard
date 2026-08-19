@@ -10,12 +10,12 @@ have already configured:
 
 - Chipyard/FireSim, the FPGA bitstreams, XRT/Vivado, and FPGA device access;
 - the RISC-V toolchain and the TVM-Gemmini/Verilator environment used by
-  Table 2;
+  Table 4;
 - rootless Docker access for the AE account;
 - passwordless SSH from the AE account to `localhost` for the local run farm;
 - shared FireMarshal/FireSim output directories writable by the `firesim`
   group; and
-- `CHIPYARD_DIR` and `TABLE2_TVM_AE_ROOT` defined by the AE account's
+- `CHIPYARD_DIR` and `TABLE4_TVM_AE_ROOT` defined by the AE account's
   `~/.ae-env.sh`, with that file loaded by `.bashrc`.
 
 These are host/account setup tasks performed once by the administrator. They
@@ -52,9 +52,12 @@ docker run --rm -it \
 ```
 
 Stage 1 compiles the paper workloads and records PyTorch-Chipyard's Docker-side
-compile measurements for three sampled Table 2 kernels derived from SqueezeNet,
-ResNet-50, and AlexNet. Their fixed definitions are maintained by
-`scripts/table2_results.py`.
+compile measurements for three sampled Table 4 kernels derived from SqueezeNet,
+ResNet-50, and MobileNetV2. Their fixed definitions are maintained by
+`scripts/table4_results.py`.
+
+A successful run prints `STAGE1_STATUS=PASS` together with the artifact and
+result directories.
 
 ## 3. Run Stage 2
 
@@ -70,22 +73,34 @@ bash scripts/run-stage2.sh
 ```
 
 Stage 2 builds the ELF files and FireMarshal images, runs the ordinary FireSim
-workloads, and completes Table 2 with PyTorch-Chipyard/FireSim and
+workloads, and completes Table 4 with PyTorch-Chipyard/FireSim and
 TVM-Gemmini/Verilator. It builds the Verilator simulator once if necessary;
 that setup cost is not included in the table. RVV guest kernel failures are
 retried automatically; other failures stop the workflow.
 
-To reproduce only the bounded Table 2 experiment, use the same Docker mount
+Stage 2 validates workflow completion rather than comparing model output with
+an eager-mode numerical reference. Each FireSim workload must terminate
+successfully and produce its expected `model.log`, `autotune.log`, and output
+artifact (`output.bin` when the workload has an output). A successful run prints
+their paths and ends with
+`STAGE2_STATUS=PASS`. The Table 4 workflow additionally requires all sampled
+kernel measurements and a complete summary CSV before printing
+`TABLE4_STATUS=PASS`.
+
+LLM workloads run with `--no-output`, so their completion check requires only
+the execution logs (`model.log` and `autotune.log`), not `output.bin`.
+
+To reproduce only the bounded Table 4 experiment, use the same Docker mount
 options as above and replace the Stage 1 command with:
 
 ```bash
-bash scripts/run-stage1.sh --only-table2
+bash scripts/run-stage1.sh --only-table4
 ```
 
 Then run the host part with:
 
 ```bash
-bash scripts/run-stage2.sh --only-table2
+bash scripts/run-stage2.sh --only-table4
 ```
 
 The experiment intentionally uses each tool's native target:
@@ -107,7 +122,11 @@ cd ~/pytorch-chipyard
 bash scripts/run-plot.sh
 ```
 
-Generated figures are written as `scripts/figures/fig*.pdf`. A complete Table 2
-run writes `scripts/figures/table2.csv` and `scripts/figures/table2_rows.tex`.
-Raw logs, target metadata, compiler artifacts, and intermediate results remain
-under `results/table2/`.
+Generated figures use the semantic filenames referenced by the paper source
+under `scripts/figures/`. The plotting workflow checks every generated plot
+referenced by the paper, prints each path, and ends with `FIGURES_STATUS=PASS`.
+Figure 12 is pseudocode typeset directly in LaTeX, so it has no generated plot
+file to check.
+A complete Table 4 run writes `scripts/figures/table4.csv` and
+`scripts/figures/table4_rows.tex`. Raw logs, target metadata, compiler artifacts,
+and intermediate results remain under `results/table4/`.

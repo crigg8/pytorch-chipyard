@@ -23,7 +23,7 @@ Run the Stage 2 host workflow in order:
   2. Package FireMarshal and FireSim workload files.
   3. Build/install FireMarshal images.
   4. Run FireSim workloads and collect results.
-  5. Complete Table 2's sampled-kernel FireSim and Verilator measurements
+  5. Complete Table 4's sampled-kernel FireSim and Verilator measurements
      when running the complete, non-selective workflow.
 
 Options:
@@ -32,7 +32,7 @@ Options:
                         riscv64-unknown-linux-gnu-g++.
   --riscv-gxx=PATH      Exact riscv64-unknown-linux-gnu-g++ path.
   --workload=LIST       Run selected FireSim workload(s). May be repeated.
-  --only-alias-first    Build the Figure 6(c) ablation artifacts and limit
+  --only-alias-first    Build the Figure 7 ablation artifacts and limit
                         image generation and FireSim execution to 4 CNN
                         Gemmini 4-core off workloads and 8 LLM seq=256 SDPA
                         Gemmini 4-core on/off workloads.
@@ -51,22 +51,22 @@ Options:
   --skip-package        Skip FireMarshal workload/package generation.
   --skip-images         Skip FireMarshal image build/install.
   --skip-firesim        Skip FireSim execution/collection.
-  --skip-table2         Skip the sampled-kernel Table 2 workflow.
-  --only-table2         Skip ordinary Stage 2 workloads and complete only the
-                        Table 2 run started by Docker Stage 1.
-  --table2-kernels=LIST Limit Table 2 to selected built-in kernel IDs.
+  --skip-table4         Skip the sampled-kernel Table 4 workflow.
+  --only-table4         Skip ordinary Stage 2 workloads and complete only the
+                        Table 4 run started by Docker Stage 1.
+  --table4-kernels=LIST Limit Table 4 to selected built-in kernel IDs.
                         Default: all three.
-  --table2-repeats=N    Must match the Docker Stage 1 trial count. Default: 1.
+  --table4-repeats=N    Must match the Docker Stage 1 trial count. Default: 1.
   -h, --help            Show this help.
 
 Environment:
   The script automatically sources PYTORCH_CHIPYARD_ACCOUNT_ENV (or the legacy
-  TABLE2_ACCOUNT_ENV) when it exists. It defaults to $HOME/.ae-env.sh.
+  TABLE4_ACCOUNT_ENV) when it exists. It defaults to $HOME/.ae-env.sh.
   CHIPYARD_DIR must point to the local Chipyard checkout. scripts/env.sh
   derives CHIPYARD_ENV_PATH as $CHIPYARD_DIR/env.sh.
   PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS defaults to 0 so existing collected
   results and logs are preserved. Set it to 1 to clean them before FireSim runs.
-  TABLE2_TVM_AE_ROOT points to the prepared TVM-Gemmini AE tree. It defaults to
+  TABLE4_TVM_AE_ROOT points to the prepared TVM-Gemmini AE tree. It defaults to
   $HOME/tvm-gemmini-ae on the author review server.
 EOF
 }
@@ -84,10 +84,10 @@ skip_elves=0
 skip_package=0
 skip_images=0
 skip_firesim=0
-skip_table2=0
-only_table2=0
-table2_kernels="squeezenet_fire2_squeeze,resnet50_classifier,alexnet_classifier"
-table2_repeats="${TABLE2_REPEATS:-1}"
+skip_table4=0
+only_table4=0
+table4_kernels="squeezenet_fire2_squeeze,resnet50_classifier,mobilenetv2_classifier"
+table4_repeats="${TABLE4_REPEATS:-1}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -184,30 +184,30 @@ while [[ "$#" -gt 0 ]]; do
       skip_firesim=1
       shift
       ;;
-    --skip-table2)
-      skip_table2=1
+    --skip-table4)
+      skip_table4=1
       shift
       ;;
-    --only-table2)
-      only_table2=1
+    --only-table4)
+      only_table4=1
       shift
       ;;
-    --table2-kernels=*)
-      table2_kernels="${1#*=}"
+    --table4-kernels=*)
+      table4_kernels="${1#*=}"
       shift
       ;;
-    --table2-kernels)
-      [[ "$#" -ge 2 ]] || die "--table2-kernels requires a value"
-      table2_kernels="$2"
+    --table4-kernels)
+      [[ "$#" -ge 2 ]] || die "--table4-kernels requires a value"
+      table4_kernels="$2"
       shift 2
       ;;
-    --table2-repeats=*)
-      table2_repeats="${1#*=}"
+    --table4-repeats=*)
+      table4_repeats="${1#*=}"
       shift
       ;;
-    --table2-repeats)
-      [[ "$#" -ge 2 ]] || die "--table2-repeats requires a value"
-      table2_repeats="$2"
+    --table4-repeats)
+      [[ "$#" -ge 2 ]] || die "--table4-repeats requires a value"
+      table4_repeats="$2"
       shift 2
       ;;
     --skip-plot)
@@ -230,17 +230,17 @@ alias_first_selected=0
 if [[ "${only_alias_first}" -eq 1 && "${only_alias_first_cnn_off}" -eq 1 ]]; then
   die "--only-alias-first and --only-alias-first-cnn-off are mutually exclusive"
 fi
-if [[ "${only_table2}" -eq 1 && "${skip_table2}" -eq 1 ]]; then
-  die "--only-table2 cannot be combined with --skip-table2"
+if [[ "${only_table4}" -eq 1 && "${skip_table4}" -eq 1 ]]; then
+  die "--only-table4 cannot be combined with --skip-table4"
 fi
-if [[ "${only_table2}" -eq 1 && \
+if [[ "${only_table4}" -eq 1 && \
       ( "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 || \
         "${#workload_args[@]}" -gt 0 || "${resume_firesim}" -eq 1 || \
         -n "${resume_from_arg}" ) ]]; then
-  die "--only-table2 cannot be combined with workload or ordinary FireSim selection options"
+  die "--only-table4 cannot be combined with workload or ordinary FireSim selection options"
 fi
-[[ "${table2_repeats}" =~ ^[1-9][0-9]*$ ]] || \
-  die "--table2-repeats must be a positive integer"
+[[ "${table4_repeats}" =~ ^[1-9][0-9]*$ ]] || \
+  die "--table4-repeats must be a positive integer"
 if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; then
   alias_first_selected=1
   [[ "${#workload_args[@]}" -eq 0 ]] || \
@@ -268,21 +268,21 @@ if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; the
   for workload in "${alias_first_workloads[@]}"; do
     workload_args+=("--workload=${workload}")
   done
-  log "selected Figure 6(c) alias-first ablation: ${#alias_first_workloads[@]} workloads"
+  log "selected Figure 7 alias-first ablation: ${#alias_first_workloads[@]} workloads"
 fi
 
-# Table 2 is a complete cross-toolchain experiment, not per-workload
+# Table 4 is a complete cross-toolchain experiment, not per-workload
 # post-processing. Do not unexpectedly launch it after a selective Stage 2 run
 # or when the caller explicitly disabled FireSim.
 if [[ "${#workload_args[@]}" -gt 0 || \
-      ( "${skip_firesim}" -eq 1 && "${only_table2}" -eq 0 ) ]]; then
-  if [[ "${skip_table2}" -eq 0 ]]; then
-    log "skipping Table 2 after a selective or --skip-firesim Stage 2 run"
+      ( "${skip_firesim}" -eq 1 && "${only_table4}" -eq 0 ) ]]; then
+  if [[ "${skip_table4}" -eq 0 ]]; then
+    log "skipping Table 4 after a selective or --skip-firesim Stage 2 run"
   fi
-  skip_table2=1
+  skip_table4=1
 fi
 
-if [[ "${only_table2}" -eq 1 ]]; then
+if [[ "${only_table4}" -eq 1 ]]; then
   skip_elves=1
   skip_package=1
   skip_images=1
@@ -303,7 +303,7 @@ fi
 # by earlier invocations unless cleanup is explicitly requested by the caller.
 export PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS="${PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS:-0}"
 
-account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
 if [[ -f "${account_env}" ]]; then
   set +u
   source "${account_env}"
@@ -317,33 +317,33 @@ set -u
 
 cd "${REPO_ROOT}"
 
-if [[ "${skip_table2}" -eq 0 ]]; then
-  table2_script="${SCRIPT_DIR}/run_table2.sh"
-  table2_results_tool="${SCRIPT_DIR}/table2_results.py"
-  table2_tvm_ae_root="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
-  table2_stage1_output="${TABLE2_STAGE1_OUTPUT_DIR:-${REPO_ROOT}/results/table2/stage1-latest}"
-  [[ -f "${table2_script}" ]] || die "missing Table 2 runner: ${table2_script}"
-  [[ -f "${table2_results_tool}" ]] || die "missing Table 2 results tool: ${table2_results_tool}"
-  [[ -f "${table2_tvm_ae_root}/scripts/env.sh" ]] || \
-    die "missing TVM-Gemmini AE environment: ${table2_tvm_ae_root}/scripts/env.sh; set TABLE2_TVM_AE_ROOT or pass --skip-table2"
-  [[ -s "${table2_stage1_output}/raw.csv" ]] || \
-    die "missing Docker Stage 1 Table 2 results: ${table2_stage1_output}/raw.csv; rerun Stage 1 without --skip-table2"
-  [[ -w "${table2_stage1_output}" && -w "${table2_stage1_output}/raw.csv" ]] || \
-    die "Docker Stage 1 Table 2 results are not writable by $(id -un): ${table2_stage1_output}; repair bind-mount ownership or permissions before Stage 2"
-  IFS=',' read -r -a table2_kernel_list <<<"${table2_kernels}"
-  for table2_kernel in "${table2_kernel_list[@]}"; do
-    table2_kernel="${table2_kernel//[[:space:]]/}"
-    [[ -n "${table2_kernel}" ]] || continue
-    for ((table2_trial = 1; table2_trial <= table2_repeats; table2_trial++)); do
-      table2_kernel_spec="${table2_stage1_output}/artifacts/pytorch-chipyard/${table2_kernel}/trial-${table2_trial}/gemmini/model_spec.json"
-      [[ -s "${table2_kernel_spec}" ]] || \
-        die "missing Docker Stage 1 Table 2 artifact: ${table2_kernel_spec}"
-      table2_artifact_dir="$(dirname -- "${table2_kernel_spec}")"
-      [[ -w "${table2_artifact_dir}" ]] || \
-        die "Docker Stage 1 artifact directory is not writable by $(id -un): ${table2_artifact_dir}"
-      for table2_blob in input.bin weights.bin; do
-        [[ -r "${table2_artifact_dir}/${table2_blob}" ]] || \
-          die "Docker Stage 1 artifact is not readable by $(id -un): ${table2_artifact_dir}/${table2_blob}; repair bind-mount ownership or permissions before Stage 2"
+if [[ "${skip_table4}" -eq 0 ]]; then
+  table4_script="${SCRIPT_DIR}/run_table4.sh"
+  table4_results_tool="${SCRIPT_DIR}/table4_results.py"
+  table4_tvm_ae_root="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+  table4_stage1_output="${TABLE4_STAGE1_OUTPUT_DIR:-${REPO_ROOT}/results/table4/stage1-latest}"
+  [[ -f "${table4_script}" ]] || die "missing Table 4 runner: ${table4_script}"
+  [[ -f "${table4_results_tool}" ]] || die "missing Table 4 results tool: ${table4_results_tool}"
+  [[ -f "${table4_tvm_ae_root}/scripts/env.sh" ]] || \
+    die "missing TVM-Gemmini AE environment: ${table4_tvm_ae_root}/scripts/env.sh; set TABLE4_TVM_AE_ROOT or pass --skip-table4"
+  [[ -s "${table4_stage1_output}/raw.csv" ]] || \
+    die "missing Docker Stage 1 Table 4 results: ${table4_stage1_output}/raw.csv; rerun Stage 1 without --skip-table4"
+  [[ -w "${table4_stage1_output}" && -w "${table4_stage1_output}/raw.csv" ]] || \
+    die "Docker Stage 1 Table 4 results are not writable by $(id -un): ${table4_stage1_output}; repair bind-mount ownership or permissions before Stage 2"
+  IFS=',' read -r -a table4_kernel_list <<<"${table4_kernels}"
+  for table4_kernel in "${table4_kernel_list[@]}"; do
+    table4_kernel="${table4_kernel//[[:space:]]/}"
+    [[ -n "${table4_kernel}" ]] || continue
+    for ((table4_trial = 1; table4_trial <= table4_repeats; table4_trial++)); do
+      table4_kernel_spec="${table4_stage1_output}/artifacts/pytorch-chipyard/${table4_kernel}/trial-${table4_trial}/gemmini/model_spec.json"
+      [[ -s "${table4_kernel_spec}" ]] || \
+        die "missing Docker Stage 1 Table 4 artifact: ${table4_kernel_spec}"
+      table4_artifact_dir="$(dirname -- "${table4_kernel_spec}")"
+      [[ -w "${table4_artifact_dir}" ]] || \
+        die "Docker Stage 1 artifact directory is not writable by $(id -un): ${table4_artifact_dir}"
+      for table4_blob in input.bin weights.bin; do
+        [[ -r "${table4_artifact_dir}/${table4_blob}" ]] || \
+          die "Docker Stage 1 artifact is not readable by $(id -un): ${table4_artifact_dir}/${table4_blob}; repair bind-mount ownership or permissions before Stage 2"
       done
     done
   done
@@ -369,6 +369,7 @@ if [[ "${skip_elves}" -eq 0 ]]; then
   log "building ELFs from examples"
   bash "${SCRIPT_DIR}/build-chipyard-elves.sh" \
     "${build_elves_args[@]}"
+  printf '[stage2][PASS] ELF generation root=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_package}" -eq 0 ]]; then
@@ -380,6 +381,7 @@ if [[ "${skip_package}" -eq 0 ]]; then
     done
   fi
   bash "${SCRIPT_DIR}/package-firemarshal-workload.sh" "${package_args[@]}"
+  printf '[stage2][PASS] FireMarshal workload directory=%s\n' "${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
 fi
 
 if [[ "${skip_images}" -eq 0 ]]; then
@@ -391,6 +393,8 @@ if [[ "${skip_images}" -eq 0 ]]; then
     done
   fi
   bash "${SCRIPT_DIR}/build-firemarshal-images.sh" "${image_args[@]}"
+  printf '[stage2][PASS] FireMarshal images=%s FireSim workloads=%s\n' \
+    "${FIREMARSHAL_IMAGE_DIR}" "${FIRESIM_WORKLOAD_DIR}"
 fi
 
 if [[ "${skip_firesim}" -eq 0 ]]; then
@@ -406,16 +410,20 @@ if [[ "${skip_firesim}" -eq 0 ]]; then
   fi
   log "running FireSim workloads"
   bash "${SCRIPT_DIR}/run-firesim-workloads.sh" "${firesim_args[@]}"
+  printf '[stage2][PASS] FireSim results=%s\n' "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}"
 fi
 
-if [[ "${skip_table2}" -eq 0 ]]; then
-  log "completing Table 2 from Docker Stage 1 compile measurements"
-  bash "${SCRIPT_DIR}/run_table2.sh" \
+if [[ "${skip_table4}" -eq 0 ]]; then
+  log "completing Table 4 from Docker Stage 1 compile measurements"
+  bash "${SCRIPT_DIR}/run_table4.sh" \
     --resume \
     --build-verilator \
-    --kernels="${table2_kernels}" \
-    --repeats="${table2_repeats}" \
-    --output-dir="${table2_stage1_output}"
+    --kernels="${table4_kernels}" \
+    --repeats="${table4_repeats}" \
+    --output-dir="${table4_stage1_output}"
+  printf '[stage2][PASS] Table 4 results=%s\n' "${table4_stage1_output}"
 fi
 
 log "done; run bash scripts/run-plot.sh to generate figures"
+printf 'STAGE2_RESULTS_DIR=%s\n' "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}"
+printf 'STAGE2_STATUS=PASS\n'

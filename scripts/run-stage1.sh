@@ -27,13 +27,13 @@ Options:
   --skip-sdpa               Skip default SDPA LLM workloads.
   --skip-flex-attn          Skip flash/window attention LLM workloads.
   --skip-gemmini-autotune   Skip gemmini-max-autotune.
-  --skip-table2             Skip Docker-side Table 2 kernel compile timing.
-  --only-table2             Run only the Docker-side Table 2 kernel compile
+  --skip-table4             Skip Docker-side Table 4 kernel compile timing.
+  --only-table4             Run only the Docker-side Table 4 kernel compile
                             measurements and save artifacts for Stage 2.
-  --table2-kernels=LIST     Limit Table 2 to selected built-in kernel IDs.
+  --table4-kernels=LIST     Limit Table 4 to selected built-in kernel IDs.
                             Default: all three.
-  --table2-repeats=N        Table 2 compile trials. Default: 1.
-  --only-alias-first        Compile only the Figure 6(c) alias-first ablation:
+  --table4-repeats=N        Table 4 compile trials. Default: 1.
+  --only-alias-first        Compile only the Figure 7 alias-first ablation:
                             CNN alias-first off plus LLM alias-first on/off,
                             all using Gemmini and 4 cores.
   --only-alias-first-cnn-off
@@ -48,10 +48,10 @@ skip_im2col=0
 skip_sdpa=0
 skip_flex_attn=0
 skip_gemmini_autotune=0
-skip_table2=0
-only_table2=0
-table2_kernels="squeezenet_fire2_squeeze,resnet50_classifier,alexnet_classifier"
-table2_repeats="${TABLE2_REPEATS:-1}"
+skip_table4=0
+only_table4=0
+table4_kernels="squeezenet_fire2_squeeze,resnet50_classifier,mobilenetv2_classifier"
+table4_repeats="${TABLE4_REPEATS:-1}"
 only_alias_first=0
 only_alias_first_cnn_off=0
 skip_alias_first_requested=0
@@ -83,30 +83,30 @@ while [[ "$#" -gt 0 ]]; do
       skip_gemmini_autotune=1
       shift
       ;;
-    --skip-table2)
-      skip_table2=1
+    --skip-table4)
+      skip_table4=1
       shift
       ;;
-    --only-table2)
-      only_table2=1
+    --only-table4)
+      only_table4=1
       shift
       ;;
-    --table2-kernels=*)
-      table2_kernels="${1#*=}"
+    --table4-kernels=*)
+      table4_kernels="${1#*=}"
       shift
       ;;
-    --table2-kernels)
-      [[ "$#" -ge 2 ]] || die "--table2-kernels requires a value"
-      table2_kernels="$2"
+    --table4-kernels)
+      [[ "$#" -ge 2 ]] || die "--table4-kernels requires a value"
+      table4_kernels="$2"
       shift 2
       ;;
-    --table2-repeats=*)
-      table2_repeats="${1#*=}"
+    --table4-repeats=*)
+      table4_repeats="${1#*=}"
       shift
       ;;
-    --table2-repeats)
-      [[ "$#" -ge 2 ]] || die "--table2-repeats requires a value"
-      table2_repeats="$2"
+    --table4-repeats)
+      [[ "$#" -ge 2 ]] || die "--table4-repeats requires a value"
+      table4_repeats="$2"
       shift 2
       ;;
     --only-alias-first | --only-alias-first-ablation)
@@ -130,18 +130,18 @@ done
 if [[ "${only_alias_first}" -eq 1 && "${only_alias_first_cnn_off}" -eq 1 ]]; then
   die "--only-alias-first and --only-alias-first-cnn-off are mutually exclusive"
 fi
-if [[ "${only_table2}" -eq 1 && \
+if [[ "${only_table4}" -eq 1 && \
       ( "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ) ]]; then
-  die "--only-table2 cannot be combined with an alias-first only option"
+  die "--only-table4 cannot be combined with an alias-first only option"
 fi
-if [[ "${only_table2}" -eq 1 && "${skip_table2}" -eq 1 ]]; then
-  die "--only-table2 cannot be combined with --skip-table2"
+if [[ "${only_table4}" -eq 1 && "${skip_table4}" -eq 1 ]]; then
+  die "--only-table4 cannot be combined with --skip-table4"
 fi
 
-[[ "${table2_repeats}" =~ ^[1-9][0-9]*$ ]] || \
-  die "--table2-repeats must be a positive integer"
+[[ "${table4_repeats}" =~ ^[1-9][0-9]*$ ]] || \
+  die "--table4-repeats must be a positive integer"
 
-if [[ "${only_table2}" -eq 1 ]]; then
+if [[ "${only_table4}" -eq 1 ]]; then
   skip_cnn=1
   skip_alias_first=1
   skip_im2col=1
@@ -158,7 +158,7 @@ if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; the
   skip_sdpa=1
   skip_flex_attn=1
   skip_gemmini_autotune=1
-  skip_table2=1
+  skip_table4=1
 fi
 
 cd "${REPO_ROOT}"
@@ -167,6 +167,7 @@ mkdir -p examples
 if [[ "${skip_cnn}" -eq 0 ]]; then
   log "running default CNN workloads"
   bash "${SCRIPT_DIR}/run-cnn.sh"
+  printf '[stage1][PASS] CNN compiler artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_alias_first}" -eq 0 ]]; then
@@ -177,47 +178,56 @@ if [[ "${skip_alias_first}" -eq 0 ]]; then
     log "running LLM SDPA seq=256 Gemmini 4-core alias-first on/off ablation"
     bash "${SCRIPT_DIR}/run-alias-first-sdpa.sh"
   fi
+  printf '[stage1][PASS] Figure 7 alias-first artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_im2col}" -eq 0 ]]; then
   log "running im2col CNN workloads"
   bash "${SCRIPT_DIR}/run-im2col.sh"
+  printf '[stage1][PASS] Figure 10 im2col artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_sdpa}" -eq 0 ]]; then
   log "running SDPA LLM workloads"
   bash "${SCRIPT_DIR}/run-sdpa.sh"
+  printf '[stage1][PASS] Figure 6(b) SDPA artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_flex_attn}" -eq 0 ]]; then
   log "running flash/window attention LLM workloads"
   bash "${SCRIPT_DIR}/run-flex-attn.sh"
+  printf '[stage1][PASS] Figure 13 FlexAttention artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_gemmini_autotune}" -eq 0 ]]; then
   log "running gemmini-max-autotune workload"
   bash "${SCRIPT_DIR}/run_gemmini_autotune.sh"
+  printf '[stage1][PASS] Figure 11 Gemmini autotuning artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
-if [[ "${skip_table2}" -eq 0 ]]; then
-  table2_results_root="${TABLE2_RESULTS_ROOT:-${REPO_ROOT}/results/table2}"
-  table2_run_id="$(date -u +%Y%m%dT%H%M%SZ)-stage1"
-  table2_output_dir="${table2_results_root}/${table2_run_id}"
-  log "measuring Table 2 PyTorch compile times inside the Stage 1 container"
-  TABLE2_PYTORCH_COMPILE_CONTEXT=docker-stage1 \
-    bash "${SCRIPT_DIR}/run_table2.sh" \
-    --kernels="${table2_kernels}" \
+if [[ "${skip_table4}" -eq 0 ]]; then
+  table4_results_root="${TABLE4_RESULTS_ROOT:-${REPO_ROOT}/results/table4}"
+  table4_run_id="$(date -u +%Y%m%dT%H%M%SZ)-stage1"
+  table4_output_dir="${table4_results_root}/${table4_run_id}"
+  log "measuring Table 4 PyTorch compile times inside the Stage 1 container"
+  TABLE4_PYTORCH_COMPILE_CONTEXT=docker-stage1 \
+    bash "${SCRIPT_DIR}/run_table4.sh" \
+    --kernels="${table4_kernels}" \
     --toolchains=pytorch \
     --phases=compile \
-    --repeats="${table2_repeats}" \
-    --output-dir="${table2_output_dir}"
+    --repeats="${table4_repeats}" \
+    --output-dir="${table4_output_dir}"
   # Docker root is mapped to nobody on root-squashed bind mounts, and Torch's
   # atomic weight-file write leaves weights.bin at mode 0600. Stage 2 runs as
   # the host AE account and must be able to read artifacts and append results.
-  chmod -R a+rwX "${table2_output_dir}"
-  mkdir -p "${table2_results_root}"
-  ln -sfn "${table2_run_id}" "${table2_results_root}/stage1-latest"
-  log "Table 2 Stage 1 results: ${table2_output_dir}"
+  chmod -R a+rwX "${table4_output_dir}"
+  mkdir -p "${table4_results_root}"
+  ln -sfn "${table4_run_id}" "${table4_results_root}/stage1-latest"
+  printf '[stage1][PASS] Table 4 compile results=%s\n' "${table4_output_dir}"
+  printf '[stage1] TABLE4_STAGE1_LATEST=%s\n' "${table4_results_root}/stage1-latest"
 fi
 
 log "done; artifacts are under ${REPO_ROOT}/examples and ${REPO_ROOT}/results"
+printf 'STAGE1_ARTIFACT_DIR=%s\n' "${REPO_ROOT}/examples"
+printf 'STAGE1_RESULTS_DIR=%s\n' "${REPO_ROOT}/results"
+printf 'STAGE1_STATUS=PASS\n'

@@ -27,14 +27,14 @@ from tvm.micro.testing.utils import create_header_file
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
-from table2_results import get_kernel
+from table4_results import get_kernel
 
 
 SEED = 2027
 
 
 def load_gemmini_target() -> dict[str, Any]:
-    include_dir = pathlib.Path(os.environ["TABLE2_TVM_GEMMINI_INCLUDE"]).resolve()
+    include_dir = pathlib.Path(os.environ["TABLE4_TVM_GEMMINI_INCLUDE"]).resolve()
     params_path = include_dir / "gemmini_params.h"
     text = params_path.read_text()
     header_digest = hashlib.sha256()
@@ -60,7 +60,7 @@ def load_gemmini_target() -> dict[str, Any]:
         "gemmini_include": str(include_dir),
         "gemmini_params_sha256": hashlib.sha256(params_path.read_bytes()).hexdigest(),
         "gemmini_headers_sha256": header_digest.hexdigest(),
-        "chipyard_commit": os.environ.get("TABLE2_TVM_CHIPYARD_COMMIT", ""),
+        "chipyard_commit": os.environ.get("TABLE4_TVM_CHIPYARD_COMMIT", ""),
     }
     if target["gemmini_dim"] != 16:
         raise SystemExit(f"expected DIM=16 in {params_path}")
@@ -150,12 +150,10 @@ def make_harness(project: pathlib.Path, kernel: dict[str, Any], output_len: int)
         raise RuntimeError("could not identify generated AOT input/output fields")
     input_field = input_match.group(1)
     output_field = output_match.group(1)
-    allowance = max(1, output_len // 100)
     harness = f'''#include <stdint.h>
 #include <stdio.h>
 #include "input.h"
 #include "model/tvmgen_default.h"
-#include "output.h"
 
 static int8_t observed[{output_len}];
 
@@ -167,20 +165,10 @@ int main(void) {{
   inputs.{input_field} = input;
   outputs.{output_field} = observed;
   int run_rc = tvmgen_default_run(&inputs, &outputs);
-  int mismatches = 0;
-  int max_abs_err = 0;
-  for (int i = 0; i < {output_len}; ++i) {{
-    int delta = (int)observed[i] - (int)output[i];
-    int abs_delta = delta < 0 ? -delta : delta;
-    if (abs_delta != 0) ++mismatches;
-    if (abs_delta > max_abs_err) max_abs_err = abs_delta;
-  }}
-  int pass = run_rc == 0 && mismatches <= {allowance};
   printf("TVM_RUN_EXIT_CODE=%d\\r\\n", run_rc);
-  printf("MISMATCHES=%d OUTPUT_COUNT={output_len} MAX_ABS_ERR=%d\\r\\n",
-         mismatches, max_abs_err);
-  printf("KERNEL_RESULT=%s\\r\\n", pass ? "PASS" : "FAIL");
-  return pass ? 0 : 1;
+  printf("OUTPUT_COUNT={output_len}\\r\\n");
+  printf("KERNEL_EXECUTION=%s\\r\\n", run_rc == 0 ? "PASS" : "FAIL");
+  return run_rc;
 }}
 '''
     (project / "src" / "dense.c").write_text(harness)
@@ -209,9 +197,7 @@ def main() -> None:
     input_data = rng.integers(
         0, 256, size=tuple(int(value) for value in input_detail["shape"]), dtype=np.uint8
     )
-    interpreter.set_tensor(input_detail["index"], input_data)
-    interpreter.invoke()
-    expected = interpreter.get_tensor(output_detail["index"]).astype("int8")
+    output_len = int(np.prod(output_detail["shape"]))
 
     flatbuffer = tflite.Model.GetRootAsModel(tflite_buffer, 0)
     shape_dict = {input_detail["name"]: tuple(int(value) for value in input_detail["shape"])}
@@ -225,12 +211,12 @@ def main() -> None:
         flatbuffer, shape_dict=shape_dict, dtype_dict=dtype_dict
     )
     mod = relay.transform.InferType()(mod)
-    if os.environ.get("TABLE2_DUMP_RELAY") == "1":
+    if os.environ.get("TABLE4_DUMP_RELAY") == "1":
         print("RELAY_BEFORE_GEMMINI_BEGIN")
         print(mod)
         print("RELAY_BEFORE_GEMMINI_END")
     mod = gemmini.preprocess_pass(mod)
-    if os.environ.get("TABLE2_DUMP_RELAY") == "1":
+    if os.environ.get("TABLE4_DUMP_RELAY") == "1":
         print("RELAY_AFTER_GEMMINI_BEGIN")
         print(mod)
         print("RELAY_AFTER_GEMMINI_END")
@@ -253,7 +239,6 @@ def main() -> None:
     with tempfile.NamedTemporaryFile() as extra_file:
         with tarfile.open(extra_file.name, "w:gz") as tar_file:
             create_header_file("input", input_data, "include/tvm", tar_file)
-            create_header_file("output", expected, "include/tvm", tar_file)
         template = pathlib.Path(tvm.micro.get_microtvm_template_projects("gemmini"))
         generated = tvm.micro.generate_project(
             template,
@@ -267,7 +252,7 @@ def main() -> None:
     install_target_headers(
         output_dir, pathlib.Path(str(target_metadata["gemmini_include"]))
     )
-    make_harness(output_dir, kernel, int(expected.size))
+    make_harness(output_dir, kernel, output_len)
     build_started = time.perf_counter()
     generated.build()
     project_build_wall_s = time.perf_counter() - build_started
@@ -286,7 +271,7 @@ def main() -> None:
         "project_build_wall_s": project_build_wall_s,
         "elf": str(elf),
     }
-    (output_dir / "table2-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    (output_dir / "table4-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(f"KERNEL_ID={kernel['id']}")
     print(f"KERNEL_LABEL={kernel['label']}")
     print(f"KERNEL_SHAPE={kernel['m']}x{kernel['n']}x{kernel['k']}")

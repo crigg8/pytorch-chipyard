@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
 if [[ -f "${account_env}" ]]; then
   set +u
   source "${account_env}"
   set -u
 fi
-TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
 account_chipyard_dir="${CHIPYARD_DIR:-}"
 source "${TVM_AE_ROOT}/scripts/env.sh"
 if [[ -n "${account_chipyard_dir}" ]]; then
@@ -18,8 +18,8 @@ if [[ -n "${account_chipyard_dir}" ]]; then
   export LD_LIBRARY_PATH="${CHIPYARD_DIR}/.conda-env/riscv-tools/lib:${LD_LIBRARY_PATH:-}"
 fi
 
-build_dir="${TABLE2_TVM_BUILD_DIR:-${PWD}/results/table2/tvm-build-llvm}"
-jobs="${TABLE2_TVM_BUILD_JOBS:-${TVM_BUILD_JOBS:-8}}"
+build_dir="${TABLE4_TVM_BUILD_DIR:-${PWD}/results/table4/tvm-build-llvm}"
+jobs="${TABLE4_TVM_BUILD_JOBS:-${TVM_BUILD_JOBS:-8}}"
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --build-dir=*) build_dir="${1#*=}"; shift ;;
@@ -40,4 +40,4 @@ cmake -S "${TVM_DIR}" -B "${build_dir}" -G Ninja \
   -DUSE_LLVM="${LLVM_CONFIG}" -DUSE_OPENMP=none -DUSE_CUDA=OFF \
   -DUSE_VULKAN=OFF -DUSE_OPENCL=OFF
 cmake --build "${build_dir}" --target tvm gemmini standalone_crt -j"${jobs}"
-printf '[tvm-table2] LLVM-enabled build=%s\n' "${build_dir}"
+printf '[tvm-table4] LLVM-enabled build=%s\n' "${build_dir}"

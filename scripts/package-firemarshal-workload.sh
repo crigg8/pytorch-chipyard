@@ -25,7 +25,7 @@ Usage:
 Default:
   Scan artifact-* directories under examples/ for generated Stage 1 artifacts
   and package every model-<N>core.elf into FireMarshal and FireSim workload
-  files.
+  files. LLM runners use --no-output; other runners retain output.bin.
 
 Generated files:
   $PYTORCH_CHIPYARD_WORKLOAD_DIR/<workload>.json
@@ -193,20 +193,6 @@ workload_kind_for() {
       printf '%s\n' cnn
       ;;
   esac
-}
-
-llm_seq_len_for() {
-  local text="$1"
-
-  if [[ "${text}" =~ (^|[/._-])seq([0-9]+)([/._-]|$) ]]; then
-    printf '%s\n' "${BASH_REMATCH[2]}"
-  elif [[ "${text}" =~ (^|[/._-])([0-9]+)tok([/._-]|$) ]]; then
-    printf '%s\n' "${BASH_REMATCH[2]}"
-  elif [[ "${text}" =~ (^|[/._-])(256|512|768|1024)([/._-]|$) ]]; then
-    printf '%s\n' "${BASH_REMATCH[2]}"
-  else
-    printf '%s\n' 256
-  fi
 }
 
 guest_root_for() {
@@ -416,7 +402,7 @@ write_workload() {
   local workload_json deploy_json workload_config_path places cpu_affinity model_command
   local omp_first_cpu omp_wait_policy omp_display_affinity gomp_spincount
   local workload_env_suffix omp_first_cpu_var omp_wait_policy_var gomp_spincount_var
-  local seq_len expect_output_bin runner_check_files output_entries kernel_only=0
+  local expect_output_bin runner_check_files output_entries kernel_only=0
 
   elf_base="$(basename "${elf_path}")"
   core="$(infer_core_from_elf "${elf_base}")"
@@ -564,11 +550,8 @@ EOF
     model_command+=" --kernel-only=flex_attention --no-output"
     expect_output_bin=0
   elif [[ "${kind}" == "llm" ]]; then
-    seq_len="$(llm_seq_len_for "${artifact_dir}")"
-    if [[ "${seq_len}" -gt 256 ]]; then
-      model_command+=" --no-output"
-      expect_output_bin=0
-    fi
+    model_command+=" --no-output"
+    expect_output_bin=0
   fi
 
   if [[ "${expect_output_bin}" -eq 1 ]]; then

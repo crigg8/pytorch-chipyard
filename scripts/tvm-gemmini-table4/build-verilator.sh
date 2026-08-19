@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
 if [[ -f "${account_env}" ]]; then
   set +u
   source "${account_env}"
   set -u
 fi
-TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
 account_chipyard_dir="${CHIPYARD_DIR:-}"
 source "${TVM_AE_ROOT}/scripts/env.sh"
 if [[ -n "${account_chipyard_dir}" ]]; then
@@ -17,8 +17,8 @@ if [[ -n "${account_chipyard_dir}" ]]; then
   export PK_BIN="${CHIPYARD_DIR}/.conda-env/riscv-tools/riscv64-unknown-elf/bin/pk"
 fi
 
-config="${TABLE2_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
-jobs="${TABLE2_VERILATOR_BUILD_JOBS:-8}"
+config="${TABLE4_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
+jobs="${TABLE4_VERILATOR_BUILD_JOBS:-8}"
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --config=*) config="${1#*=}"; shift ;;
@@ -28,8 +28,8 @@ while [[ "$#" -gt 0 ]]; do
       printf '%s\n' \
         'Usage: build-verilator.sh [--config=CONFIG] [-j N]' \
         'Default: OriginalGemminiRocketConfig (INT8, DIM=16, one Rocket core).' \
-        'Environment: TABLE2_FIRTOOL_BIN may select an explicit firtool binary.' \
-        'TABLE2_VERILATOR_RISCV may select the Chipyard host fesvr installation.'
+        'Environment: TABLE4_FIRTOOL_BIN may select an explicit firtool binary.' \
+        'TABLE4_VERILATOR_RISCV may select the Chipyard host fesvr installation.'
       exit 0
       ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -40,7 +40,7 @@ done
 sim_dir="${CHIPYARD_DIR}/sims/verilator"
 [[ -f "${sim_dir}/Makefile" ]] || { printf 'Chipyard Verilator directory not found: %s\n' "${sim_dir}" >&2; exit 1; }
 
-firtool_bin="${TABLE2_FIRTOOL_BIN:-}"
+firtool_bin="${TABLE4_FIRTOOL_BIN:-}"
 if [[ -z "${firtool_bin}" ]]; then
   firtool_bin="${CHIPYARD_DIR}/.conda-env/riscv-tools/bin/firtool"
   if [[ ! -x "${firtool_bin}" ]]; then
@@ -48,7 +48,7 @@ if [[ -z "${firtool_bin}" ]]; then
   fi
 fi
 [[ -n "${firtool_bin}" && -x "${firtool_bin}" ]] || {
-  printf 'firtool not found; expected %s or set TABLE2_FIRTOOL_BIN\n' \
+  printf 'firtool not found; expected %s or set TABLE4_FIRTOOL_BIN\n' \
     "${CHIPYARD_DIR}/.conda-env/riscv-tools/bin/firtool" >&2
   exit 1
 }
@@ -59,7 +59,7 @@ export PATH="$(dirname -- "${firtool_bin}"):${PATH}"
 # RISCV, but there it means the matching host-side Spike/FESVR installation.
 # Keep this override local to this subprocess so the two toolchains cannot leak
 # into one another.
-verilator_riscv="${TABLE2_VERILATOR_RISCV:-${CHIPYARD_DIR}/.conda-env/riscv-tools}"
+verilator_riscv="${TABLE4_VERILATOR_RISCV:-${CHIPYARD_DIR}/.conda-env/riscv-tools}"
 for required_path in \
   "${verilator_riscv}/include/fesvr/htif.h" \
   "${verilator_riscv}/include/fesvr/tsi.h" \
@@ -67,7 +67,7 @@ for required_path in \
   "${verilator_riscv}/lib/libfesvr.a"; do
   [[ -r "${required_path}" ]] || {
     printf 'Chipyard Verilator dependency not found: %s\n' "${required_path}" >&2
-    printf 'Set TABLE2_VERILATOR_RISCV to a matching Spike/FESVR installation.\n' >&2
+    printf 'Set TABLE4_VERILATOR_RISCV to a matching Spike/FESVR installation.\n' >&2
     exit 1
   }
 done
@@ -98,7 +98,7 @@ fi
 
 target_include="${CHIPYARD_DIR}/generators/gemmini/software/gemmini-rocc-tests/include"
 target_header="${target_include}/gemmini_params.h"
-shared_header="${TABLE2_FIRESIM_GEMMINI_HEADER:-${CHIPYARD_DIR}/sims/firesim/deploy/results-build/gemmini_params.h}"
+shared_header="${TABLE4_FIRESIM_GEMMINI_HEADER:-${CHIPYARD_DIR}/sims/firesim/deploy/results-build/gemmini_params.h}"
 shared_header_backup=""
 shared_header_existed=0
 shared_header_stamp_before=""
@@ -117,7 +117,7 @@ restore_shared_header() {
     fi
   elif [[ -e "${shared_header}" ]]; then
     if ! rm -f -- "${shared_header}"; then
-      printf 'failed to remove Table 2 generated shared header: %s\n' "${shared_header}" >&2
+      printf 'failed to remove Table 4 generated shared header: %s\n' "${shared_header}" >&2
       rc=1
     fi
   fi

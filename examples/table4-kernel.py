@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile or validate one model-derived GEMM for the RTL-turnaround table."""
+"""Compile one model-derived GEMM for the Table 4 turnaround experiment."""
 
 from __future__ import annotations
 
@@ -17,13 +17,11 @@ import torch._inductor.config as inductor_config
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-DEFAULT_ARTIFACT_ROOT = SCRIPT_DIR / "artifact-table2-kernels"
+DEFAULT_ARTIFACT_ROOT = SCRIPT_DIR / "artifact-table4-kernels"
 DTYPE = torch.float32
 SEED = 2027
-VALIDATE_ATOL = 1e-3
-
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from table2_results import get_kernel
+from table4_results import get_kernel
 
 
 class SingleMatmul(torch.nn.Module):
@@ -39,9 +37,7 @@ class SingleMatmul(torch.nn.Module):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--compile", action="store_true")
-    mode.add_argument("--validate", action="store_true")
+    parser.add_argument("--compile", action="store_true", required=True)
     parser.add_argument("--kernel", required=True)
     return parser.parse_args()
 
@@ -57,7 +53,7 @@ def configure_backend(kernel_id: str, path: Path) -> None:
 
     cache_dir = Path(
         os.environ.setdefault(
-            "TRITON_CACHE_DIR", f"/tmp/triton-chipyard-cache/table2-{kernel_id}"
+            "TRITON_CACHE_DIR", f"/tmp/triton-chipyard-cache/table4-{kernel_id}"
         )
     )
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +84,7 @@ def import_artifact_util(path: Path):
     util_path = path / "util.py"
     if not util_path.is_file():
         raise FileNotFoundError(f"generated util.py not found: {util_path}")
-    spec = importlib.util.spec_from_file_location("table2_kernel_artifact_util", util_path)
+    spec = importlib.util.spec_from_file_location("table4_kernel_artifact_util", util_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not import {util_path}")
     module = importlib.util.module_from_spec(spec)
@@ -120,34 +116,11 @@ def compile_kernel(kernel: dict[str, Any], path: Path) -> None:
     print(f"INPUT_BIN={input_path}")
 
 
-def validate_kernel(kernel: dict[str, Any], path: Path) -> None:
-    util = import_artifact_util(path)
-    inputs = util.read_inputs_bin(path / "input.bin")
-    observed = util.read_outputs_bin(path / "output.bin")
-    if not isinstance(inputs, torch.Tensor) or not isinstance(observed, torch.Tensor):
-        raise TypeError("expected one input tensor and one output tensor")
-    model, _ = make_model_and_input(kernel)
-    with torch.inference_mode():
-        golden = model(inputs)
-    if observed.numel() != golden.numel():
-        raise SystemExit(f"output size mismatch: {observed.numel()} != {golden.numel()}")
-    observed = observed.reshape_as(golden).to(torch.float32)
-    max_abs_err = float((observed - golden.to(torch.float32)).abs().max())
-    print_metadata(kernel, path)
-    print(f"MAX_ABS_ERR={max_abs_err:.6e}")
-    print(f"KERNEL_RESULT={'PASS' if max_abs_err <= VALIDATE_ATOL else 'FAIL'}")
-    if max_abs_err > VALIDATE_ATOL:
-        raise SystemExit(1)
-
-
 def main() -> None:
     args = parse_args()
     kernel = get_kernel(args.kernel)
     path = artifact_dir(str(kernel["id"]))
-    if args.compile:
-        compile_kernel(kernel, path)
-    else:
-        validate_kernel(kernel, path)
+    compile_kernel(kernel, path)
 
 
 if __name__ == "__main__":

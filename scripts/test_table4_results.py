@@ -9,13 +9,29 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import table2_results
+import table4_results
 
 
 KERNEL_ID = "resnet50_classifier"
 
 
-class TestTable2Results(unittest.TestCase):
+class TestTable4Results(unittest.TestCase):
+    def test_builtin_kernels_use_mobilenetv2_classifier(self):
+        kernels = table4_results.table4_kernels()
+        self.assertEqual(
+            [kernel["id"] for kernel in kernels],
+            [
+                "squeezenet_fire2_squeeze",
+                "resnet50_classifier",
+                "mobilenetv2_classifier",
+            ],
+        )
+        mobilenet = table4_results.get_kernel("mobilenetv2_classifier")
+        self.assertEqual(
+            (mobilenet["m"], mobilenet["n"], mobilenet["k"], mobilenet["macs"]),
+            (1, 1000, 1280, 1280000),
+        )
+
     def append(
         self,
         raw_path: Path,
@@ -27,17 +43,19 @@ class TestTable2Results(unittest.TestCase):
         wall: str = "1",
         status: str = "PASS",
         exit_code: str = "0",
+        kernel_id: str = KERNEL_ID,
     ) -> None:
-        table2_results.append_row(
+        kernel = table4_results.get_kernel(kernel_id)
+        table4_results.append_row(
             SimpleNamespace(
                 csv=str(raw_path),
                 run_id="test",
                 trial=trial,
-                kernel_id=KERNEL_ID,
-                kernel_label="ResNet-50 classifier",
-                source_model="ResNet-50",
-                shape="1x1000x2048",
-                macs="2048000",
+                kernel_id=kernel_id,
+                kernel_label=kernel["label"],
+                source_model=kernel["source_model"],
+                shape=f"{kernel['m']}x{kernel['n']}x{kernel['k']}",
+                macs=str(kernel["macs"]),
                 toolchain=toolchain,
                 phase=phase,
                 simulator=simulator,
@@ -52,7 +70,7 @@ class TestTable2Results(unittest.TestCase):
         )
 
     def summary_row(self, raw_path: Path, output_path: Path) -> dict[str, str]:
-        table2_results.summarize(raw_path, output_path)
+        table4_results.summarize(raw_path, output_path)
         with output_path.open(newline="") as csv_file:
             rows = list(csv.DictReader(csv_file))
         return next(row for row in rows if row["kernel_id"] == KERNEL_ID)
@@ -66,18 +84,18 @@ class TestTable2Results(unittest.TestCase):
                 "*** PASSED *** after 123 cycles\n"
                 "Wallclock Time Elapsed: 981.2 s\n"
             )
-            self.assertEqual(table2_results.extract_firesim_wall(uart), "981.2")
+            self.assertEqual(table4_results.extract_firesim_wall(uart), "981.2")
 
             failed = root / "failed-uartlog"
             failed.write_text("Wallclock Time Elapsed: 1.0 s\n")
             with self.assertRaises(SystemExit):
-                table2_results.extract_firesim_wall(failed)
+                table4_results.extract_firesim_wall(failed)
 
     def test_summary_uses_successful_medians_for_four_measurements(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             raw_path = root / "raw.csv"
-            table2_results.init_csv(raw_path)
+            table4_results.init_csv(raw_path)
             measurements = [
                 ("PyTorch-Chipyard", "compile", "", "10", "14"),
                 ("PyTorch-Chipyard", "rtl", "firesim", "20", "24"),
@@ -102,7 +120,7 @@ class TestTable2Results(unittest.TestCase):
                     wall=second,
                 )
 
-            row = self.summary_row(raw_path, root / "table2.csv")
+            row = self.summary_row(raw_path, root / "table4.csv")
             self.assertEqual(row["pytorch_compile_s"], "12.000000")
             self.assertEqual(row["firesim_s"], "22.000000")
             self.assertEqual(row["tvm_compile_s"], "3.000000")
@@ -113,7 +131,7 @@ class TestTable2Results(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             raw_path = root / "raw.csv"
-            table2_results.init_csv(raw_path)
+            table4_results.init_csv(raw_path)
             measurements = [
                 ("PyTorch-Chipyard", "compile", "", "10"),
                 ("PyTorch-Chipyard", "rtl", "firesim", "20"),
@@ -157,7 +175,7 @@ class TestTable2Results(unittest.TestCase):
     def test_has_passed_measurement_matches_exact_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             raw_path = Path(temp_dir) / "raw.csv"
-            table2_results.init_csv(raw_path)
+            table4_results.init_csv(raw_path)
             self.append(
                 raw_path,
                 trial="1",
@@ -165,7 +183,7 @@ class TestTable2Results(unittest.TestCase):
                 phase="compile",
             )
             self.assertTrue(
-                table2_results.has_passed_measurement(
+                table4_results.has_passed_measurement(
                     raw_path,
                     trial="1",
                     kernel_id=KERNEL_ID,
@@ -175,7 +193,7 @@ class TestTable2Results(unittest.TestCase):
                 )
             )
             self.assertFalse(
-                table2_results.has_passed_measurement(
+                table4_results.has_passed_measurement(
                     raw_path,
                     trial="1",
                     kernel_id=KERNEL_ID,
@@ -189,9 +207,9 @@ class TestTable2Results(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             raw_path = root / "raw.csv"
-            summary_path = root / "table2.csv"
+            summary_path = root / "table4.csv"
             output_path = root / "rows.tex"
-            table2_results.init_csv(raw_path)
+            table4_results.init_csv(raw_path)
             self.append(
                 raw_path,
                 trial="1",
@@ -199,11 +217,47 @@ class TestTable2Results(unittest.TestCase):
                 phase="compile",
                 wall="1.25",
             )
-            table2_results.summarize(raw_path, summary_path)
-            table2_results.write_latex(summary_path, output_path)
+            table4_results.summarize(raw_path, summary_path)
+            table4_results.write_latex(summary_path, output_path)
             text = output_path.read_text()
             self.assertIn(r"1.2\,s", text)
             self.assertIn("N/A", text)
+
+    def test_validate_summary_requires_complete_positive_matrix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raw_path = root / "raw.csv"
+            summary_path = root / "table4.csv"
+            table4_results.init_csv(raw_path)
+            measurements = [
+                ("PyTorch-Chipyard", "compile", "", "10"),
+                ("PyTorch-Chipyard", "rtl", "firesim", "20"),
+                ("TVM-Gemmini", "compile", "", "2"),
+                ("TVM-Gemmini", "rtl", "verilator", "100"),
+            ]
+            for kernel in table4_results.table4_kernels():
+                for toolchain, phase, simulator, wall in measurements:
+                    self.append(
+                        raw_path,
+                        trial="1",
+                        kernel_id=str(kernel["id"]),
+                        toolchain=toolchain,
+                        phase=phase,
+                        simulator=simulator,
+                        wall=wall,
+                    )
+            table4_results.summarize(raw_path, summary_path)
+            table4_results.validate_summary(summary_path, minimum_trials=1)
+
+            with summary_path.open(newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            rows[0]["firesim_s"] = ""
+            with summary_path.open("w", newline="") as csv_file:
+                writer = csv.DictWriter(csv_file, fieldnames=table4_results.SUMMARY_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+            with self.assertRaises(SystemExit):
+                table4_results.validate_summary(summary_path, minimum_trials=1)
 
 
 if __name__ == "__main__":

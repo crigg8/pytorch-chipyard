@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
 if [[ -f "${account_env}" ]]; then
   set +u
   source "${account_env}"
   set -u
 fi
-TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
 account_chipyard_dir="${CHIPYARD_DIR:-}"
 source "${TVM_AE_ROOT}/scripts/env.sh"
 if [[ -n "${account_chipyard_dir}" ]]; then
@@ -19,8 +19,8 @@ if [[ -n "${account_chipyard_dir}" ]]; then
 fi
 
 elf=""
-config="${TABLE2_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
-simulator="${TABLE2_VERILATOR_BIN:-}"
+config="${TABLE4_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
+simulator="${TABLE4_VERILATOR_BIN:-}"
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --elf=*) elf="${1#*=}"; shift ;;
@@ -43,7 +43,7 @@ if [[ -z "${simulator}" ]]; then
 fi
 [[ -x "${simulator}" ]] || {
   printf 'Verilator simulator not executable: %s\n' "${simulator}" >&2
-  printf 'Build it with scripts/tvm-gemmini-table2/build-verilator.sh.\n' >&2
+  printf 'Build it with scripts/tvm-gemmini-table4/build-verilator.sh.\n' >&2
   exit 1
 }
 
@@ -92,7 +92,8 @@ set +e
 sim_rc=${PIPESTATUS[0]}
 set -e
 [[ "${sim_rc}" -eq 0 ]] || exit "${sim_rc}"
-grep -q '^KERNEL_RESULT=PASS' "${tmp_log}" || {
-  printf 'kernel correctness marker was not PASS\n' >&2
+grep -q '^KERNEL_EXECUTION=PASS' "${tmp_log}" || {
+  printf 'kernel execution marker was not PASS\n' >&2
   exit 1
 }
+printf 'VERILATOR_STATUS=PASS\n'

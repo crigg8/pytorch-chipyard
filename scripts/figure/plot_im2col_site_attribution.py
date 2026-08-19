@@ -20,8 +20,8 @@ import numpy as np
 FIGURE_DIR = ROOT_DIR / "figures"
 CSV_PATH = ROOT_DIR / ".csv" / "im2col_site_attribution.csv"
 OUT_PATHS = {
-    "ResNet50": FIGURE_DIR / "fig9b.pdf",
-    "SqueezeNet": FIGURE_DIR / "fig9c.pdf",
+    "ResNet50": FIGURE_DIR / "im2col_site_attribution_resnet.pdf",
+    "SqueezeNet": FIGURE_DIR / "im2col_site_attribution_squeezenet.pdf",
 }
 WIDTH_CM = 3.15
 HEIGHT_CM = 3.4

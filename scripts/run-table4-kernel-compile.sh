@@ -7,9 +7,9 @@ source "${SCRIPT_DIR}/stage1.sh"
 
 usage() {
   printf '%s\n' \
-    'Usage: bash scripts/run-table2-kernel-compile.sh --kernel=ID --artifact-dir=PATH' \
+    'Usage: bash scripts/run-table4-kernel-compile.sh --kernel=ID --artifact-dir=PATH' \
     '' \
-    'Compile one built-in Table 2 kernel with the normal bounded' \
+    'Compile one built-in Table 4 kernel with the normal bounded' \
     'TorchInductor autotuning set. Gemmini max autotune is forced off.'
 }
 
@@ -34,10 +34,10 @@ done
 
 pc_prepare_environment
 export TORCHINDUCTOR_GEMMINI_MAX_AUTOTUNE=0
-pc_write_artifact_workload_hint "${artifact_dir}" "table2-kernels/${kernel}/gemmini"
+pc_write_artifact_workload_hint "${artifact_dir}" "table4-kernels/${kernel}/gemmini"
 pc_write_artifact_build_plan "${artifact_dir}" gemmini 4
 if [[ "${force_recompile}" -eq 1 ]]; then
   rm -f -- "$(pc_compile_stamp_path "${artifact_dir}")"
 fi
-pc_run_compile_once gemmini "${artifact_dir}" "table2-${kernel}" \
-  "${REPO_ROOT}/examples/table2-kernel.py" --kernel "${kernel}"
+pc_run_compile_once gemmini "${artifact_dir}" "table4-${kernel}" \
+  "${REPO_ROOT}/examples/table4-kernel.py" --kernel "${kernel}"

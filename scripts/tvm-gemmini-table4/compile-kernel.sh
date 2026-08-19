@@ -2,13 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
 if [[ -f "${account_env}" ]]; then
   set +u
   source "${account_env}"
   set -u
 fi
-TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
 account_chipyard_dir="${CHIPYARD_DIR:-}"
 source "${TVM_AE_ROOT}/scripts/env.sh"
 if [[ -n "${account_chipyard_dir}" ]]; then
@@ -18,14 +18,14 @@ if [[ -n "${account_chipyard_dir}" ]]; then
   export PK_BIN="${CHIPYARD_DIR}/.conda-env/riscv-tools/riscv64-unknown-elf/bin/pk"
   export LD_LIBRARY_PATH="${CHIPYARD_DIR}/.conda-env/riscv-tools/lib:${LD_LIBRARY_PATH:-}"
 fi
-if [[ -n "${TABLE2_TVM_BUILD_DIR:-}" ]]; then
-  TVM_BUILD_DIR="${TABLE2_TVM_BUILD_DIR}"
+if [[ -n "${TABLE4_TVM_BUILD_DIR:-}" ]]; then
+  TVM_BUILD_DIR="${TABLE4_TVM_BUILD_DIR}"
   export TVM_BUILD_DIR
 fi
 export TVM_LIBRARY_PATH="${TVM_BUILD_DIR}"
 export LD_LIBRARY_PATH="${TVM_BUILD_DIR}:${LD_LIBRARY_PATH:-}"
-export TABLE2_TVM_GEMMINI_INCLUDE="${TABLE2_TVM_GEMMINI_INCLUDE:-${CHIPYARD_DIR}/generators/gemmini/software/gemmini-rocc-tests/include}"
-export TABLE2_TVM_CHIPYARD_COMMIT="$(git -C "${CHIPYARD_DIR}" rev-parse HEAD)"
+export TABLE4_TVM_GEMMINI_INCLUDE="${TABLE4_TVM_GEMMINI_INCLUDE:-${CHIPYARD_DIR}/generators/gemmini/software/gemmini-rocc-tests/include}"
+export TABLE4_TVM_CHIPYARD_COMMIT="$(git -C "${CHIPYARD_DIR}" rev-parse HEAD)"
 
 kernel=""
 output_dir=""
@@ -46,13 +46,13 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 [[ -n "${kernel}" && -n "${output_dir}" ]] || exit 2
-[[ -f "${TABLE2_TVM_GEMMINI_INCLUDE}/gemmini_params.h" ]] || {
-  printf 'Chipyard Gemmini headers not found: %s\n' "${TABLE2_TVM_GEMMINI_INCLUDE}" >&2
+[[ -f "${TABLE4_TVM_GEMMINI_INCLUDE}/gemmini_params.h" ]] || {
+  printf 'Chipyard Gemmini headers not found: %s\n' "${TABLE4_TVM_GEMMINI_INCLUDE}" >&2
   exit 1
 }
 [[ -f "${TVM_BUILD_DIR}/libtvm.so" ]] || {
   printf 'LLVM-enabled TVM build not found: %s/libtvm.so\n' "${TVM_BUILD_DIR}" >&2
-  printf 'Run scripts/tvm-gemmini-table2/prepare-tvm.sh first.\n' >&2
+  printf 'Run scripts/tvm-gemmini-table4/prepare-tvm.sh first.\n' >&2
   exit 1
 }
 args=(--kernel "${kernel}" --output-dir "${output_dir}")

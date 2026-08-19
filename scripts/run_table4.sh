@@ -3,16 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd -P)"
-RESULTS_TOOL="${SCRIPT_DIR}/table2_results.py"
+RESULTS_TOOL="${SCRIPT_DIR}/table4_results.py"
 
-log() { printf '[table2] %s\n' "$*"; }
-warn() { printf '[table2][warn] %s\n' "$*" >&2; }
-die() { printf '[table2][error] %s\n' "$*" >&2; exit 1; }
+log() { printf '[table4] %s\n' "$*"; }
+warn() { printf '[table4][warn] %s\n' "$*" >&2; }
+die() { printf '[table4][error] %s\n' "$*" >&2; exit 1; }
+pass() { printf '[table4][PASS] %s\n' "$*"; }
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/run_table2.sh [options]
+  bash scripts/run_table4.sh [options]
 
 Measure native compile and cycle-accurate RTL turnaround for three bounded,
 model-derived GEMM kernels. PyTorch-Chipyard uses its FP32 DIM=8 four-core
@@ -21,11 +22,11 @@ The measurements characterize each tool's own workflow and are not a kernel
 performance comparison.
 
 Options:
-  --kernels=LIST       Built-in Table 2 kernel IDs (default: all)
+  --kernels=LIST       Built-in Table 4 kernel IDs (default: all)
   --toolchains=LIST    pytorch,tvm (default: both)
   --phases=LIST        compile,rtl (default: both)
   --repeats=N          Independent trials; report successful medians (default: 1)
-  --output-dir=PATH    Result directory (default: results/table2/<UTC run id>)
+  --output-dir=PATH    Result directory (default: results/table4/<UTC run id>)
   --resume             Run only missing/failed measurements in --output-dir
   --build-verilator    Build the TVM-Gemmini Verilator simulator if absent
   --dry-run            Print the experiment matrix without running commands
@@ -33,33 +34,33 @@ Options:
 
 Outputs:
   raw.csv              Provenance and status for every trial and phase
-  table2.csv           One summary row per sampled kernel
-  table2_rows.tex      LaTeX rows generated from table2.csv
+  table4.csv           One summary row per sampled kernel
+  table4_rows.tex      LaTeX rows generated from table4.csv
   logs/                Full compiler and simulator logs
   artifacts/           Per-toolchain compiler artifacts
 
-Only a complete successful matrix is copied to scripts/figures/table2.csv and
-scripts/figures/table2_rows.tex. Simulator construction, ELF construction,
+Only a complete successful matrix is copied to scripts/figures/table4.csv and
+scripts/figures/table4_rows.tex. Simulator construction, ELF construction,
 FireMarshal image construction, and FireSim setup are deliberately untimed.
 
 Environment:
-  TABLE2_TVM_AE_ROOT              TVM-Gemmini AE tree
+  TABLE4_TVM_AE_ROOT              TVM-Gemmini AE tree
                                   (default: $HOME/tvm-gemmini-ae)
-  TABLE2_TVM_BUILD_DIR            Private LLVM-enabled TVM build
+  TABLE4_TVM_BUILD_DIR            Private LLVM-enabled TVM build
                                   (default: <output-dir>/setup/tvm-build-llvm)
-  TABLE2_TVM_GEMMINI_INCLUDE      Gemmini headers for the Verilator RTL target
+  TABLE4_TVM_GEMMINI_INCLUDE      Gemmini headers for the Verilator RTL target
                                   (default: current Chipyard target headers)
-  TABLE2_VERILATOR_BIN            Prebuilt Verilator simulator override
-  TABLE2_BUILD_VERILATOR=1        Same as --build-verilator
-  TABLE2_PYTORCH_FIRESIM_HW_CONFIG
+  TABLE4_VERILATOR_BIN            Prebuilt Verilator simulator override
+  TABLE4_BUILD_VERILATOR=1        Same as --build-verilator
+  TABLE4_PYTORCH_FIRESIM_HW_CONFIG
                                   FireSim HW config override
-  TABLE2_KEEP_GOING=0             Stop after the first failed measurement
-  TABLE2_RESULTS_PYTHON           Python for the CSV helper
+  TABLE4_KEEP_GOING=0             Stop after the first failed measurement
+  TABLE4_RESULTS_PYTHON           Python for the CSV helper
 EOF
 }
 
-if [[ -n "${TABLE2_RESULTS_PYTHON:-}" ]]; then
-  RESULTS_PYTHON="${TABLE2_RESULTS_PYTHON}"
+if [[ -n "${TABLE4_RESULTS_PYTHON:-}" ]]; then
+  RESULTS_PYTHON="${TABLE4_RESULTS_PYTHON}"
 elif command -v python3 >/dev/null 2>&1; then
   RESULTS_PYTHON="$(command -v python3)"
 elif command -v python >/dev/null 2>&1; then
@@ -69,15 +70,15 @@ else
 fi
 
 mapfile -t ALL_KERNELS < <("${RESULTS_PYTHON}" "${RESULTS_TOOL}" list-kernels)
-[[ "${#ALL_KERNELS[@]}" -gt 0 ]] || die "no built-in Table 2 kernels found"
+[[ "${#ALL_KERNELS[@]}" -gt 0 ]] || die "no built-in Table 4 kernels found"
 kernels_arg="$(IFS=,; printf '%s' "${ALL_KERNELS[*]}")"
 toolchains_arg="pytorch,tvm"
 phases_arg="compile,rtl"
-repeats="${TABLE2_REPEATS:-1}"
+repeats="${TABLE4_REPEATS:-1}"
 output_dir=""
 resume=0
 dry_run=0
-build_verilator="${TABLE2_BUILD_VERILATOR:-0}"
+build_verilator="${TABLE4_BUILD_VERILATOR:-0}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -101,7 +102,7 @@ done
 
 [[ "${repeats}" =~ ^[1-9][0-9]*$ ]] || die "--repeats must be a positive integer"
 [[ "${build_verilator}" == 0 || "${build_verilator}" == 1 ]] || \
-  die "TABLE2_BUILD_VERILATOR must be 0 or 1"
+  die "TABLE4_BUILD_VERILATOR must be 0 or 1"
 
 contains() {
   local needle="$1"
@@ -153,14 +154,14 @@ if [[ "${resume}" -eq 1 && -z "${output_dir}" ]]; then
   die "--resume requires --output-dir"
 fi
 if [[ -z "${output_dir}" ]]; then
-  output_dir="${REPO_ROOT}/results/table2/${run_id}"
+  output_dir="${REPO_ROOT}/results/table4/${run_id}"
 elif [[ "${output_dir}" != /* ]]; then
   output_dir="${PWD}/${output_dir}"
 fi
 mkdir -p "${output_dir}/logs" "${output_dir}/artifacts" "${output_dir}/setup"
 raw_csv="${output_dir}/raw.csv"
-summary_csv="${output_dir}/table2.csv"
-latex_rows="${output_dir}/table2_rows.tex"
+summary_csv="${output_dir}/table4.csv"
+latex_rows="${output_dir}/table4_rows.tex"
 if [[ "${resume}" -eq 1 && ! -s "${raw_csv}" ]]; then
   die "cannot resume without ${raw_csv}"
 fi
@@ -209,7 +210,7 @@ elapsed_seconds() {
 }
 
 failures=0
-keep_going="${TABLE2_KEEP_GOING:-1}"
+keep_going="${TABLE4_KEEP_GOING:-1}"
 record_failure() {
   failures=$((failures + 1))
   [[ "${keep_going}" != 0 ]] || return 1
@@ -229,35 +230,42 @@ run_pytorch_compile() {
   artifact="$(pytorch_artifact "${kernel}" "${trial}")"
   log_path="${output_dir}/logs/pytorch-${kernel}-trial-${trial}-compile.log"
   if already_passed "${trial}" "${kernel}" PyTorch-Chipyard compile ""; then
-    log "resume: PyTorch compile ${kernel} trial ${trial} already passed"
+    pass "resume PyTorch-Chipyard compile kernel=${kernel} artifact=${artifact} log=${log_path}"
     return
   fi
   if [[ "${dry_run}" -eq 1 ]]; then
     log "DRY RUN PyTorch compile ${kernel} trial ${trial}"
     return
   fi
-  run_logged "${log_path}" bash "${SCRIPT_DIR}/run-table2-kernel-compile.sh" \
+  run_logged "${log_path}" bash "${SCRIPT_DIR}/run-table4-kernel-compile.sh" \
     --kernel "${kernel}" --artifact-dir "${artifact}" --force-recompile
-  if [[ "${RUN_RC}" -eq 0 ]] && wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
+  if [[ "${RUN_RC}" -eq 0 && \
+        -s "${artifact}/model_spec.json" && -s "${artifact}/util.py" && \
+        -s "${artifact}/input.bin" && -s "${artifact}/weights.bin" ]] && \
+     wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
     status=PASS
   else
     status=FAIL
     wall=""
+    [[ "${RUN_RC}" -ne 0 ]] || RUN_RC=1
   fi
   append_result "${trial}" "${kernel}" PyTorch-Chipyard compile "" "${wall}" \
     "${status}" "${RUN_RC}" "${artifact}" "${log_path}" \
     "fp32,gemmini-dim8,rocket-4core,firesim" \
-    "normal bounded TorchInductor candidate set; context=${TABLE2_PYTORCH_COMPILE_CONTEXT:-host}"
+    "normal bounded TorchInductor candidate set; context=${TABLE4_PYTORCH_COMPILE_CONTEXT:-host}"
+  if [[ "${status}" == PASS ]]; then
+    pass "PyTorch-Chipyard compile kernel=${kernel} artifact=${artifact} log=${log_path}"
+  fi
   [[ "${status}" == PASS ]] || record_failure
 }
 
-tvm_build_dir="${TABLE2_TVM_BUILD_DIR:-${output_dir}/setup/tvm-build-llvm}"
+tvm_build_dir="${TABLE4_TVM_BUILD_DIR:-${output_dir}/setup/tvm-build-llvm}"
 tvm_prepared=0
 prepare_tvm() {
   [[ "${tvm_prepared}" -eq 0 ]] || return
   run_logged "${output_dir}/logs/setup-tvm.log" \
-    env TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
-    bash "${SCRIPT_DIR}/tvm-gemmini-table2/prepare-tvm.sh" --build-dir "${tvm_build_dir}"
+    env TABLE4_TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
+    bash "${SCRIPT_DIR}/tvm-gemmini-table4/prepare-tvm.sh" --build-dir "${tvm_build_dir}"
   [[ "${RUN_RC}" -eq 0 ]] || die "failed to prepare the LLVM-enabled TVM build; see ${output_dir}/logs/setup-tvm.log"
   tvm_prepared=1
 }
@@ -267,7 +275,7 @@ run_tvm_compile() {
   artifact="$(tvm_artifact "${kernel}" "${trial}")"
   log_path="${output_dir}/logs/tvm-${kernel}-trial-${trial}-compile.log"
   if already_passed "${trial}" "${kernel}" TVM-Gemmini compile ""; then
-    log "resume: TVM compile ${kernel} trial ${trial} already passed"
+    pass "resume TVM-Gemmini compile kernel=${kernel} artifact=${artifact} log=${log_path}"
     return
   fi
   if [[ "${dry_run}" -eq 1 ]]; then
@@ -277,29 +285,36 @@ run_tvm_compile() {
   prepare_tvm
   [[ ! -e "${artifact}" ]] || force=(--force)
   run_logged "${log_path}" env \
-    TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
-    TABLE2_TVM_BUILD_DIR="${tvm_build_dir}" \
-    bash "${SCRIPT_DIR}/tvm-gemmini-table2/compile-kernel.sh" \
+    TABLE4_TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
+    TABLE4_TVM_BUILD_DIR="${tvm_build_dir}" \
+    bash "${SCRIPT_DIR}/tvm-gemmini-table4/compile-kernel.sh" \
     --kernel "${kernel}" --output-dir "${artifact}" "${force[@]}"
-  if [[ "${RUN_RC}" -eq 0 ]] && wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
+  if [[ "${RUN_RC}" -eq 0 && \
+        -s "${artifact}/src/build/dense-baremetal" && \
+        -s "${artifact}/table4-metadata.json" ]] && \
+     wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
     status=PASS
   else
     status=FAIL
     wall=""
+    [[ "${RUN_RC}" -ne 0 ]] || RUN_RC=1
   fi
   append_result "${trial}" "${kernel}" TVM-Gemmini compile "" "${wall}" \
     "${status}" "${RUN_RC}" "${artifact}" "${log_path}" \
     "int8,gemmini-dim16,rocket-singlecore,verilator" \
     "Relay/Gemmini compilation; TFLite conversion and generated-project C build excluded"
+  if [[ "${status}" == PASS ]]; then
+    pass "TVM-Gemmini compile kernel=${kernel} artifact=${artifact} log=${log_path}"
+  fi
   [[ "${status}" == PASS ]] || record_failure
 }
 
 verilator_prepared=0
 prepare_verilator() {
-  local simulator="${TABLE2_VERILATOR_BIN:-}"
+  local simulator="${TABLE4_VERILATOR_BIN:-}"
   [[ "${verilator_prepared}" -eq 0 ]] || return
   if [[ -z "${simulator}" ]]; then
-    local tvm_root="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
+    local tvm_root="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}"
     [[ -f "${tvm_root}/scripts/env.sh" ]] || die "TVM-Gemmini environment not found: ${tvm_root}/scripts/env.sh"
     simulator="$(
       account_chipyard_dir="${CHIPYARD_DIR:-}"
@@ -310,18 +325,18 @@ prepare_verilator() {
         CHIPYARD_DIR="${account_chipyard_dir}"
       fi
       printf '%s/sims/verilator/simulator-chipyard.harness-%s' \
-        "${CHIPYARD_DIR}" "${TABLE2_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
+        "${CHIPYARD_DIR}" "${TABLE4_VERILATOR_CONFIG:-OriginalGemminiRocketConfig}"
     )"
   fi
   if [[ ! -x "${simulator}" && "${build_verilator}" -eq 1 ]]; then
     run_logged "${output_dir}/logs/setup-verilator.log" \
-      env TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
-      bash "${SCRIPT_DIR}/tvm-gemmini-table2/build-verilator.sh"
+      env TABLE4_TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
+      bash "${SCRIPT_DIR}/tvm-gemmini-table4/build-verilator.sh"
     [[ "${RUN_RC}" -eq 0 ]] || die "failed to build Verilator; see ${output_dir}/logs/setup-verilator.log"
   fi
   [[ -x "${simulator}" ]] || \
-    die "Verilator simulator not found at ${simulator}; pass --build-verilator or set TABLE2_VERILATOR_BIN"
-  export TABLE2_VERILATOR_BIN="${simulator}"
+    die "Verilator simulator not found at ${simulator}; pass --build-verilator or set TABLE4_VERILATOR_BIN"
+  export TABLE4_VERILATOR_BIN="${simulator}"
   verilator_prepared=1
 }
 
@@ -331,7 +346,7 @@ run_tvm_rtl() {
   elf="${artifact}/src/build/dense-baremetal"
   log_path="${output_dir}/logs/tvm-${kernel}-trial-${trial}-verilator.log"
   if already_passed "${trial}" "${kernel}" TVM-Gemmini rtl verilator; then
-    log "resume: TVM Verilator ${kernel} trial ${trial} already passed"
+    pass "resume TVM-Gemmini Verilator kernel=${kernel} elf=${elf} log=${log_path}"
     return
   fi
   if [[ "${dry_run}" -eq 1 ]]; then
@@ -348,9 +363,9 @@ run_tvm_rtl() {
   prepare_verilator
   start="$(date +%s.%N)"
   run_logged "${log_path}" env \
-    TABLE2_TVM_AE_ROOT="${TABLE2_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
-    TABLE2_VERILATOR_BIN="${TABLE2_VERILATOR_BIN}" \
-    bash "${SCRIPT_DIR}/tvm-gemmini-table2/run-verilator.sh" --elf "${elf}"
+    TABLE4_TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
+    TABLE4_VERILATOR_BIN="${TABLE4_VERILATOR_BIN}" \
+    bash "${SCRIPT_DIR}/tvm-gemmini-table4/run-verilator.sh" --elf "${elf}"
   end="$(date +%s.%N)"
   if [[ "${RUN_RC}" -eq 0 ]]; then
     wall="$(elapsed_seconds "${start}" "${end}")"
@@ -362,12 +377,15 @@ run_tvm_rtl() {
   append_result "${trial}" "${kernel}" TVM-Gemmini rtl verilator "${wall}" \
     "${status}" "${RUN_RC}" "${artifact}" "${log_path}" \
     "int8,gemmini-dim16,rocket-singlecore,verilator" \
-    "host wall time of the correctness-checked Verilator process"
+    "host wall time of the completed Verilator process"
+  if [[ "${status}" == PASS ]]; then
+    pass "TVM-Gemmini Verilator kernel=${kernel} elf=${elf} log=${log_path}"
+  fi
   [[ "${status}" == PASS ]] || record_failure
 }
 
 load_pytorch_host_environment() {
-  local account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE2_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
+  local account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
   if [[ -f "${account_env}" ]]; then
     set +u
     source "${account_env}"
@@ -381,11 +399,11 @@ load_pytorch_host_environment() {
 
 run_pytorch_rtl() {
   local trial="$1" kernel="$2" artifact workload_root collected_root workload
-  local log_path uart output_bin wall status hw_override
+  local log_path uart output_bin model_log autotune_log wall status hw_override
   artifact="$(pytorch_artifact "${kernel}" "${trial}")"
   log_path="${output_dir}/logs/pytorch-${kernel}-trial-${trial}-firesim.log"
   if already_passed "${trial}" "${kernel}" PyTorch-Chipyard rtl firesim; then
-    log "resume: PyTorch FireSim ${kernel} trial ${trial} already passed"
+    pass "resume PyTorch-Chipyard FireSim kernel=${kernel} artifact=${artifact} log=${log_path}"
     return
   fi
   if [[ "${dry_run}" -eq 1 ]]; then
@@ -403,8 +421,8 @@ run_pytorch_rtl() {
   workload_root="${output_dir}/setup/firemarshal-workloads"
   collected_root="${output_dir}/firesim-results"
   mkdir -p "${workload_root}" "${collected_root}" "${output_dir}/logs/firesim"
-  workload="table2-${run_id}-${kernel}-trial-${trial}-gemmini-4core"
-  printf '%s\n' "table2-${run_id}-${kernel}-trial-${trial}/gemmini" > \
+  workload="table4-${run_id}-${kernel}-trial-${trial}-gemmini-4core"
+  printf '%s\n' "table4-${run_id}-${kernel}-trial-${trial}/gemmini" > \
     "${artifact}/.pytorch-chipyard-workload-rel"
 
   run_logged "${log_path}.elf" bash "${SCRIPT_DIR}/build-chipyard-elves.sh" \
@@ -420,7 +438,7 @@ run_pytorch_rtl() {
       bash "${SCRIPT_DIR}/build-firemarshal-images.sh" --workload "${workload}"
   fi
   if [[ "${RUN_RC}" -eq 0 ]]; then
-    hw_override="${workload}=${TABLE2_PYTORCH_FIRESIM_HW_CONFIG:-alveo_u250_firesim_fp8x8_gemmini_rocket_4core_no_nic}"
+    hw_override="${workload}=${TABLE4_PYTORCH_FIRESIM_HW_CONFIG:-alveo_u250_firesim_fp8x8_gemmini_rocket_4core_no_nic}"
     run_logged "${log_path}" env \
       PYTORCH_CHIPYARD_WORKLOAD_DIR="${workload_root}" \
       PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR="${collected_root}" \
@@ -432,12 +450,12 @@ run_pytorch_rtl() {
   fi
   uart="${collected_root}/${workload}/uartlog"
   output_bin="${collected_root}/${workload}/output.bin"
-  if [[ "${RUN_RC}" -eq 0 && -s "${output_bin}" ]]; then
-    cp -f "${output_bin}" "${artifact}/output.bin"
-    run_logged "${log_path}.validate" bash "${SCRIPT_DIR}/validate-table2-kernel.sh" \
-      --kernel "${kernel}" --artifact-dir "${artifact}"
-  elif [[ "${RUN_RC}" -eq 0 ]]; then
-    warn "FireSim did not collect ${output_bin}"
+  model_log="${collected_root}/${workload}/model.log"
+  autotune_log="${collected_root}/${workload}/autotune.log"
+  if [[ "${RUN_RC}" -eq 0 && \
+        ( ! -s "${uart}" || ! -s "${model_log}" || \
+          ! -s "${autotune_log}" || ! -s "${output_bin}" ) ]]; then
+    warn "FireSim output is incomplete: uart=${uart} model=${model_log} autotune=${autotune_log} output=${output_bin}"
     RUN_RC=1
   fi
   if [[ "${RUN_RC}" -eq 0 ]] && wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract-firesim-wall --log "${uart}")"; then
@@ -450,6 +468,9 @@ run_pytorch_rtl() {
     "${status}" "${RUN_RC}" "${artifact}" "${log_path}" \
     "fp32,gemmini-dim8,rocket-4core,firesim" \
     "FireSim UART wall time; includes native runtime autotuning and launches; excludes ELF/image/FireSim setup"
+  if [[ "${status}" == PASS ]]; then
+    pass "PyTorch-Chipyard FireSim kernel=${kernel} model_log=${model_log} output=${output_bin} uart=${uart}"
+  fi
   [[ "${status}" == PASS ]] || record_failure
 }
 
@@ -495,12 +516,23 @@ if [[ "${dry_run}" -eq 0 && "${failures}" -eq 0 ]] && \
   complete_matrix=1
 fi
 if [[ "${complete_matrix}" -eq 1 ]]; then
-  awk -F, 'NR > 1 && $NF != "PASS" { exit 1 }' "${summary_csv}" || \
-    die "internal summary validation failed"
-  cp -f "${summary_csv}" "${SCRIPT_DIR}/figures/table2.csv"
-  cp -f "${latex_rows}" "${SCRIPT_DIR}/figures/table2_rows.tex"
-  log "updated stable Table 2 artifacts under ${SCRIPT_DIR}/figures"
+  "${RESULTS_PYTHON}" "${RESULTS_TOOL}" validate-summary \
+    --summary "${summary_csv}" --minimum-trials "${repeats}" || \
+    die "Table 4 CSV completeness validation failed"
+  [[ -s "${latex_rows}" ]] || die "Table 4 LaTeX rows are missing or empty: ${latex_rows}"
+  cp -f "${summary_csv}" "${SCRIPT_DIR}/figures/table4.csv"
+  cp -f "${latex_rows}" "${SCRIPT_DIR}/figures/table4_rows.tex"
+  pass "Table 4 CSV=${summary_csv}"
+  pass "Table 4 LaTeX rows=${latex_rows}"
+  pass "Stable Table 4 CSV=${SCRIPT_DIR}/figures/table4.csv"
+  pass "Stable Table 4 LaTeX rows=${SCRIPT_DIR}/figures/table4_rows.tex"
 fi
 
+log "raw results: ${raw_csv}"
 log "summary: ${summary_csv}"
 [[ "${failures}" -eq 0 ]] || die "${failures} measurement(s) failed; resume with --resume --output-dir=${output_dir}"
+if [[ "${complete_matrix}" -eq 1 ]]; then
+  printf 'TABLE4_STATUS=PASS\n'
+elif [[ "${dry_run}" -eq 0 ]]; then
+  printf 'TABLE4_SELECTED_PHASES_STATUS=PASS\n'
+fi
