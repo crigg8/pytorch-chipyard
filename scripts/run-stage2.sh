@@ -32,7 +32,7 @@ Options:
                         riscv64-unknown-linux-gnu-g++.
   --riscv-gxx=PATH      Exact riscv64-unknown-linux-gnu-g++ path.
   --workload=LIST       Run selected FireSim workload(s). May be repeated.
-  --only-alias-first    Build the Figure 7 ablation artifacts and limit
+  --only-alias-first    Build the Figure 9 ablation artifacts and limit
                         image generation and FireSim execution to 4 CNN
                         Gemmini 4-core off workloads and 8 LLM seq=256 SDPA
                         Gemmini 4-core on/off workloads.
@@ -268,7 +268,7 @@ if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; the
   for workload in "${alias_first_workloads[@]}"; do
     workload_args+=("--workload=${workload}")
   done
-  log "selected Figure 7 alias-first ablation: ${#alias_first_workloads[@]} workloads"
+  log "selected Figure 9 alias-first ablation: ${#alias_first_workloads[@]} workloads"
 fi
 
 # Table 4 is a complete cross-toolchain experiment, not per-workload

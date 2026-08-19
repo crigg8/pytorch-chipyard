@@ -20,7 +20,7 @@ execution-order kernel table, and autotune metadata:
 | squeezenet-rvv-2core | 63 | 146 |
 | squeezenet-rvv-4core | 63 | 146 |
 
-The isolated plot test generated `cnn_result_saturn.pdf` (Figure 8(b)) with all four models
+The isolated plot test generated `cnn_result_saturn.pdf` (Figure 7(b)) with all four models
 and both 2-thread and 4-thread bars.
 
 Two input-selection bugs were fixed in `generate_plot_inputs.py`:
@@ -35,7 +35,7 @@ Two input-selection bugs were fixed in `generate_plot_inputs.py`:
 The whole suite is not yet reproducible from the currently collected results.
 This is missing experiment data, not a failure to parse the new RVV logs.
 
-- `cnn_result_saturn.pdf` (Figure 8(b)): complete.
+- `cnn_result_saturn.pdf` (Figure 7(b)): complete.
 - `alias_first_ablation` and `autotune_gemmini_max`: complete.
 - Rocket CNN scaling: missing ResNet50 and SqueezeNet scalar/Rocket 4-, 8-,
   and 16-core logs.

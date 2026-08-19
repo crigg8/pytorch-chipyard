@@ -33,7 +33,7 @@ Options:
   --table4-kernels=LIST     Limit Table 4 to selected built-in kernel IDs.
                             Default: all three.
   --table4-repeats=N        Table 4 compile trials. Default: 1.
-  --only-alias-first        Compile only the Figure 7 alias-first ablation:
+  --only-alias-first        Compile only the Figure 9 alias-first ablation:
                             CNN alias-first off plus LLM alias-first on/off,
                             all using Gemmini and 4 cores.
   --only-alias-first-cnn-off
@@ -178,7 +178,7 @@ if [[ "${skip_alias_first}" -eq 0 ]]; then
     log "running LLM SDPA seq=256 Gemmini 4-core alias-first on/off ablation"
     bash "${SCRIPT_DIR}/run-alias-first-sdpa.sh"
   fi
-  printf '[stage1][PASS] Figure 7 alias-first artifacts=%s\n' "${REPO_ROOT}/examples"
+  printf '[stage1][PASS] Figure 9 alias-first artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_im2col}" -eq 0 ]]; then

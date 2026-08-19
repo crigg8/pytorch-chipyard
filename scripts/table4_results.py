@@ -229,7 +229,7 @@ def write_latex(summary_path: Path, output_path: Path) -> None:
         label = row["kernel"].replace("_", r"\_")
         shape = row["shape"].replace("x", r"\!\times\!")
         lines.append(
-            rf"\makecell[l]{{{label}\\${shape}$}} & {cell(row['pytorch_compile_s'])} & {cell(row['firesim_s'])} & {cell(row['tvm_compile_s'])} & {cell(row['verilator_s'])} \\"
+            rf"\makecell[c]{{{label}\\(${shape}$)}} & {cell(row['pytorch_compile_s'])} & {cell(row['firesim_s'])} & {cell(row['tvm_compile_s'])} & {cell(row['verilator_s'])} \\"
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n")

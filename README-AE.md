@@ -38,7 +38,45 @@ docker build \
 The Docker image only builds the compiler environment used by Stage 1. The
 external FPGA host environment is supplied by the preconfigured server.
 
-## 2. Run Stage 1
+## 2. Run the bounded smoke test
+
+Before starting the full evaluation, compile the shared 32x32x32 GEMM for the
+three PyTorch-Chipyard targets inside the Stage 1 image:
+
+```bash
+mkdir -p results
+
+docker run --rm -it \
+  -v "$PWD/results:/opt/pytorch-chipyard/results" \
+  -v pytorch-chipyard-triton-cache:/tmp/triton-chipyard-cache \
+  pytorch-chipyard:stage1 \
+  bash scripts/run-smoke-test-stage1.sh
+```
+
+The command compiles separate RVV, Gemmini, and scalar artifacts and prints
+`SMOKE_STAGE1_STATUS=PASS`. Complete the smoke test on the preconfigured FPGA
+host with:
+
+```bash
+source ~/.bashrc
+cd ~/pytorch-chipyard
+
+bash scripts/run-smoke-test.sh
+```
+
+This runs the GEMM through TVM-Gemmini on its single-core INT8 DIM=16
+Verilator target, and through PyTorch-Chipyard on the RVV four-core, Gemmini
+four-core, and scalar Rocket sixteen-core FireSim targets. The test checks
+successful simulator completion and the expected runtime artifacts rather
+than comparing numerical results. It prints the path to every successful run
+and ends with `SMOKE_TEST_STATUS=PASS`. Results and full logs are written under
+`results/smoke-test/`, with the latest successful run linked as
+`results/smoke-test/latest`.
+
+The Verilator simulator is part of the preconfigured host setup. If it needs
+to be rebuilt, use `bash scripts/run-smoke-test.sh --build-verilator`.
+
+## 3. Run Stage 1
 
 ```bash
 mkdir -p examples results
@@ -59,7 +97,7 @@ ResNet-50, and MobileNetV2. Their fixed definitions are maintained by
 A successful run prints `STAGE1_STATUS=PASS` together with the artifact and
 result directories.
 
-## 3. Run Stage 2
+## 4. Run Stage 2
 
 If Stage 2 is started in a new shell, load the preconfigured account
 environment once before running it. `run-stage2.sh` also sources
@@ -113,7 +151,7 @@ Gemmini headers generated for the selected Chipyard Verilator target and
 rejects a run if those headers have drifted, so the older headers vendored by
 TVM-Gemmini cannot silently mismatch the RTL simulator.
 
-## 4. Generate the paper outputs
+## 5. Generate the paper outputs
 
 ```bash
 source ~/.bashrc

@@ -126,7 +126,7 @@ log "python      : $python_path"
 if [[ "${only_alias_first}" -eq 1 ]]; then
   plot_scripts=(plot_alias_first_ablation.py)
   expected_outputs=(
-    "Figure 7|alias_first_ablation.pdf"
+    "Figure 9|alias_first_ablation.pdf"
   )
 else
   plot_scripts=(
@@ -144,12 +144,12 @@ else
   expected_outputs=(
     "Figure 6(a)|cnn_absolute_cycles.pdf"
     "Figure 6(b)|spda_prefill_256.pdf"
-    "Figure 7|alias_first_ablation.pdf"
-    "Figure 8(a)|cnn_result_rocket.pdf"
-    "Figure 8(b)|cnn_result_saturn.pdf"
-    "Figure 8(c)|cnn_result_gemmini.pdf"
-    "Figure 9(a)|mobilenet_squeezenet_backend_attribution.pdf"
-    "Figure 9(b)|mobilenet_alexnet_scaling_attribution.pdf"
+    "Figure 7(a)|cnn_result_rocket.pdf"
+    "Figure 7(b)|cnn_result_saturn.pdf"
+    "Figure 7(c)|cnn_result_gemmini.pdf"
+    "Figure 8(a)|mobilenet_squeezenet_backend_attribution.pdf"
+    "Figure 8(b)|mobilenet_alexnet_scaling_attribution.pdf"
+    "Figure 9|alias_first_ablation.pdf"
     "Figure 10(a)|im2col_speedup.pdf"
     "Figure 10(b)|im2col_site_attribution_resnet.pdf"
     "Figure 10(c)|im2col_site_attribution_squeezenet.pdf"

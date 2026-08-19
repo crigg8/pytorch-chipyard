@@ -28,9 +28,16 @@ from tvm.micro.testing.utils import create_header_file
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
 from table4_results import get_kernel
+from smoke_test_spec import SMOKE_GEMM_KERNEL, smoke_gemm_kernel
 
 
 SEED = 2027
+
+
+def resolve_kernel(kernel_id: str) -> dict[str, Any]:
+    if kernel_id == SMOKE_GEMM_KERNEL["id"]:
+        return smoke_gemm_kernel()
+    return get_kernel(kernel_id)
 
 
 def load_gemmini_target() -> dict[str, Any]:
@@ -177,7 +184,7 @@ int main(void) {{
 def main() -> None:
     args = parse_args()
     output_dir = args.output_dir.resolve()
-    kernel = get_kernel(args.kernel)
+    kernel = resolve_kernel(args.kernel)
     target_metadata = load_gemmini_target()
     if output_dir.exists():
         if not args.force:
