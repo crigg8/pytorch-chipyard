@@ -18,6 +18,25 @@ if [[ -n "${account_chipyard_dir}" ]]; then
   export LD_LIBRARY_PATH="${CHIPYARD_DIR}/.conda-env/riscv-tools/lib:${LD_LIBRARY_PATH:-}"
 fi
 
+# TVM-Gemmini passes the input matrix's first dimension as Gemmini's row
+# stride. This is invisible for classifier GEMMs with one input row, but it
+# corrupts multi-row kernels such as the sampled SqueezeNet convolution. Keep
+# the external checkout reproducible by applying the small fix idempotently.
+stride_patch="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)/patches/tvm-gemmini-input-stride.patch"
+[[ -f "${stride_patch}" ]] || {
+  printf 'missing TVM-Gemmini stride patch: %s\n' "${stride_patch}" >&2
+  exit 1
+}
+if git -C "${TVM_DIR}" apply --check "${stride_patch}"; then
+  git -C "${TVM_DIR}" apply "${stride_patch}"
+  printf '[tvm-table4] applied input row-stride fix to %s\n' "${TVM_DIR}"
+elif git -C "${TVM_DIR}" apply --reverse --check "${stride_patch}"; then
+  printf '[tvm-table4] input row-stride fix already applied in %s\n' "${TVM_DIR}"
+else
+  printf 'TVM-Gemmini input row-stride patch does not apply cleanly: %s\n' "${stride_patch}" >&2
+  exit 1
+fi
+
 build_dir="${TABLE4_TVM_BUILD_DIR:-${PWD}/results/table4/tvm-build-llvm}"
 jobs="${TABLE4_TVM_BUILD_JOBS:-${TVM_BUILD_JOBS:-8}}"
 while [[ "$#" -gt 0 ]]; do
