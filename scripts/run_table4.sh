@@ -399,6 +399,7 @@ load_pytorch_host_environment() {
 
 run_pytorch_rtl() {
   local trial="$1" kernel="$2" artifact workload_root collected_root workload
+  local kernel_workload_tag
   local log_path uart output_bin model_log autotune_log wall status hw_override
   artifact="$(pytorch_artifact "${kernel}" "${trial}")"
   log_path="${output_dir}/logs/pytorch-${kernel}-trial-${trial}-firesim.log"
@@ -421,8 +422,12 @@ run_pytorch_rtl() {
   workload_root="${output_dir}/setup/firemarshal-workloads"
   collected_root="${output_dir}/firesim-results"
   mkdir -p "${workload_root}" "${collected_root}" "${output_dir}/logs/firesim"
-  workload="table4-${run_id}-${kernel}-trial-${trial}-gemmini-4core"
-  printf '%s\n' "table4-${run_id}-${kernel}-trial-${trial}/gemmini" > \
+  # package-firemarshal-workload.sh canonicalizes underscores to hyphens when
+  # it derives a workload name. Use the same canonical spelling here so the
+  # image builder and FireSim runner select the JSON that packaging creates.
+  kernel_workload_tag="${kernel//_/-}"
+  workload="table4-${run_id}-${kernel_workload_tag}-trial-${trial}-gemmini-4core"
+  printf '%s\n' "table4-${run_id}-${kernel_workload_tag}-trial-${trial}/gemmini" > \
     "${artifact}/.pytorch-chipyard-workload-rel"
 
   run_logged "${log_path}.elf" bash "${SCRIPT_DIR}/build-chipyard-elves.sh" \
