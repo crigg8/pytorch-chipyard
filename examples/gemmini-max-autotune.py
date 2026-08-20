@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_ARTIFACT_DIR = SCRIPT_DIR.parent / "IR" / TASK_NAME
 VALIDATE_ATOL = 1e-3
 SEED = 0
+EXPECTED_AUTOTUNE_CANDIDATES = 2163
 
 
 class SingleMatmulModule(torch.nn.Module):
@@ -117,6 +119,29 @@ def print_config(path: Path, input_shape: tuple[int, ...]) -> None:
     print(f"[config] artifact_dir={path}")
 
 
+def validate_autotune_candidates(path: Path) -> None:
+    spec_path = path / "model_spec.json"
+    document = json.loads(spec_path.read_text())
+    sites = document.get("deferred_autotune_sites")
+    if not isinstance(sites, list) or len(sites) != 1:
+        raise RuntimeError(
+            f"expected one deferred autotune site in {spec_path}, got {sites!r}"
+        )
+    site = sites[0]
+    if not isinstance(site, dict):
+        raise RuntimeError(f"autotune site in {spec_path} is not an object")
+    choices = site.get("choices")
+    if not isinstance(choices, list):
+        raise RuntimeError(f"autotune site in {spec_path} has no choices list")
+    candidate_count = len(choices)
+    if candidate_count != EXPECTED_AUTOTUNE_CANDIDATES:
+        raise RuntimeError(
+            "Gemmini autotune candidate count mismatch: "
+            f"expected {EXPECTED_AUTOTUNE_CANDIDATES}, got {candidate_count}"
+        )
+    print(f"[artifact] autotune_candidates={candidate_count}")
+
+
 def run_compile(args: argparse.Namespace) -> None:
     path = artifact_dir()
     configure_artifact_env(path)
@@ -131,6 +156,7 @@ def run_compile(args: argparse.Namespace) -> None:
         _ = compiled_model(inputs)
     compile_time_s = time.perf_counter() - started_at
 
+    validate_autotune_candidates(path)
     util = import_artifact_util(path)
     input_path = util.write_inputs_bin(inputs)
     print(f"[compile] seconds={compile_time_s:.3f}")
