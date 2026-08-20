@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import statistics
 from datetime import datetime, timezone
@@ -34,6 +35,12 @@ TRIAL_FIELDS = [
     "pytorch_compile_trials", "firesim_trials", "tvm_compile_trials",
     "verilator_trials",
 ]
+
+TVM_COMPILE_SCOPE = (
+    "gemmini.preprocess_pass through relay.build, MLF export, "
+    "and microTVM project generation"
+)
+TVM_COMPILE_EXCLUDES = ["TFLite model preparation", "target C/ELF build"]
 
 
 TABLE4_EXPERIMENT: dict[str, Any] = {
@@ -299,6 +306,20 @@ def has_passed_measurement(
     )
 
 
+def has_current_tvm_compile_metadata(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        metadata = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        metadata.get("schema_version") == 2
+        and metadata.get("compile_scope") == TVM_COMPILE_SCOPE
+        and metadata.get("compile_excludes") == TVM_COMPILE_EXCLUDES
+    )
+
+
 def extract_last(path: Path, key: str) -> str:
     matches = re.findall(
         rf"(?:^|\[compile\]\s+){re.escape(key)}=([0-9]+(?:\.[0-9]+)?)",
@@ -376,6 +397,8 @@ def parser() -> argparse.ArgumentParser:
     passed.add_argument("--toolchain", required=True)
     passed.add_argument("--phase", choices=["compile", "rtl"], required=True)
     passed.add_argument("--simulator", choices=["", "firesim", "verilator"], default="")
+    metadata = commands.add_parser("has-current-tvm-compile-metadata")
+    metadata.add_argument("--metadata", required=True)
     return result
 
 
@@ -410,6 +433,10 @@ def main() -> None:
             Path(args.csv), trial=args.trial, kernel_id=args.kernel_id,
             toolchain=args.toolchain, phase=args.phase, simulator=args.simulator,
         ) else 1)
+    elif args.command == "has-current-tvm-compile-metadata":
+        raise SystemExit(
+            0 if has_current_tvm_compile_metadata(Path(args.metadata)) else 1
+        )
 
 
 if __name__ == "__main__":

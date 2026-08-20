@@ -29,6 +29,7 @@ export TABLE4_TVM_CHIPYARD_COMMIT="$(git -C "${CHIPYARD_DIR}" rev-parse HEAD)"
 
 kernel=""
 output_dir=""
+compile_only=0
 force=0
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -36,9 +37,11 @@ while [[ "$#" -gt 0 ]]; do
     --kernel) [[ "$#" -ge 2 ]] || exit 2; kernel="$2"; shift 2 ;;
     --output-dir=*) output_dir="${1#*=}"; shift ;;
     --output-dir) [[ "$#" -ge 2 ]] || exit 2; output_dir="$2"; shift 2 ;;
+    --compile-only) compile_only=1; shift ;;
     --force) force=1; shift ;;
     -h | --help)
-      printf '%s\n' 'Usage: compile-kernel.sh --kernel=ID --output-dir=PATH'
+      printf '%s\n' \
+        'Usage: compile-kernel.sh --kernel=ID --output-dir=PATH [--compile-only]'
       exit 0
       ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -56,5 +59,6 @@ done
   exit 1
 }
 args=(--kernel "${kernel}" --output-dir "${output_dir}")
+[[ "${compile_only}" -eq 0 ]] || args+=(--compile-only)
 [[ "${force}" -eq 0 ]] || args+=(--force)
 exec "${TVM_ENV}/bin/python" "${SCRIPT_DIR}/compile-kernel.py" "${args[@]}"

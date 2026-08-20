@@ -27,7 +27,7 @@ from tvm.micro.testing.utils import create_header_file
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
-from table4_results import get_kernel
+from table4_results import TVM_COMPILE_EXCLUDES, TVM_COMPILE_SCOPE, get_kernel
 from smoke_test_spec import SMOKE_GEMM_KERNEL, smoke_gemm_kernel
 
 
@@ -114,6 +114,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--kernel", required=True)
     parser.add_argument("--output-dir", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--compile-only",
+        action="store_true",
+        help=(
+            "stop after the timed Gemmini preprocess, Relay build, MLF export, "
+            "and microTVM project-generation path"
+        ),
+    )
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
@@ -222,24 +230,23 @@ def main() -> None:
         print("RELAY_BEFORE_GEMMINI_BEGIN")
         print(mod)
         print("RELAY_BEFORE_GEMMINI_END")
+
+    # Table 4 defines TVM compilation as the complete Gemmini-specific
+    # model-to-project path. Model preparation and target C/ELF construction
+    # remain outside this interval.
+    compile_started = time.perf_counter()
     mod = gemmini.preprocess_pass(mod)
-    if os.environ.get("TABLE4_DUMP_RELAY") == "1":
-        print("RELAY_AFTER_GEMMINI_BEGIN")
-        print(mod)
-        print("RELAY_AFTER_GEMMINI_END")
     runtime = relay.backend.Runtime("crt", {"system-lib": False})
     target = tvm.target.Target({"kind": "c", "device": "gemmini"})
     executor = relay.backend.Executor(
         "aot", options={"interface-api": "c", "unpacked-api": 1}
     )
-    compile_started = time.perf_counter()
     with gemmini.build_config(
         usmp_alg="hill_climb", opt_level=3, disabled_pass=["AlterOpLayout"]
     ):
         module = relay.build(
             mod, executor=executor, runtime=runtime, target=target, params=params
         )
-    compile_wall_s = time.perf_counter() - compile_started
 
     temp_dir = tvm.contrib.utils.tempdir()
     tvm.micro.export_model_library_format(module, temp_dir / "model.tar")
@@ -253,30 +260,47 @@ def main() -> None:
             output_dir,
             {"project_type": "dense_example", "extra_files_tar": extra_file.name},
         )
-    # TVM-Gemmini vendors an older software snapshot. Compile the generated
-    # program against the headers belonging to the Verilator RTL target so the
-    # software-visible Gemmini parameters and command API cannot silently drift.
-    install_target_headers(
-        output_dir, pathlib.Path(str(target_metadata["gemmini_include"]))
-    )
-    make_harness(output_dir, kernel, output_len)
-    build_started = time.perf_counter()
-    generated.build()
-    project_build_wall_s = time.perf_counter() - build_started
-    elf = output_dir / "src" / "build" / "dense-baremetal"
-    if not elf.is_file():
-        raise SystemExit(f"generated project build did not produce {elf}")
+    compile_wall_s = time.perf_counter() - compile_started
+
+    if os.environ.get("TABLE4_DUMP_RELAY") == "1":
+        print("RELAY_AFTER_GEMMINI_BEGIN")
+        print(mod)
+        print("RELAY_AFTER_GEMMINI_END")
+
     generated_sources = list((output_dir / "src" / "model").glob("default_lib*.c"))
-    if not any("tiled_matmul_auto" in path.read_text(errors="replace") for path in generated_sources):
+    if not any(
+        "tiled_matmul_auto" in path.read_text(errors="replace")
+        for path in generated_sources
+    ):
         raise SystemExit("TVM output does not contain a Gemmini tiled_matmul_auto call")
 
+    project_build_wall_s = None
+    elf = None
+    if not args.compile_only:
+        # TVM-Gemmini vendors an older software snapshot. Compile the generated
+        # program against the headers belonging to the Verilator RTL target so
+        # the software-visible Gemmini parameters and command API cannot drift.
+        install_target_headers(
+            output_dir, pathlib.Path(str(target_metadata["gemmini_include"]))
+        )
+        make_harness(output_dir, kernel, output_len)
+        build_started = time.perf_counter()
+        generated.build()
+        project_build_wall_s = time.perf_counter() - build_started
+        elf = output_dir / "src" / "build" / "dense-baremetal"
+        if not elf.is_file():
+            raise SystemExit(f"generated project build did not produce {elf}")
+
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kernel": kernel,
         "target": target_metadata,
+        "compile_scope": TVM_COMPILE_SCOPE,
+        "compile_excludes": TVM_COMPILE_EXCLUDES,
+        "compile_only": args.compile_only,
         "compile_wall_s": compile_wall_s,
         "project_build_wall_s": project_build_wall_s,
-        "elf": str(elf),
+        "elf": str(elf) if elf is not None else None,
     }
     (output_dir / "table4-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(f"KERNEL_ID={kernel['id']}")
@@ -290,8 +314,11 @@ def main() -> None:
         "rocket-singlecore,verilator"
     )
     print(f"COMPILE_WALL_S={compile_wall_s:.6f}")
-    print(f"PROJECT_BUILD_WALL_S={project_build_wall_s:.6f}")
-    print(f"ELF={elf}")
+    print(f"COMPILE_ONLY={int(args.compile_only)}")
+    if project_build_wall_s is not None:
+        print(f"PROJECT_BUILD_WALL_S={project_build_wall_s:.6f}")
+    if elf is not None:
+        print(f"ELF={elf}")
 
 
 if __name__ == "__main__":

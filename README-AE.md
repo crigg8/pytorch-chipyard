@@ -141,6 +141,27 @@ Then run the host part with:
 bash scripts/run-stage2.sh --only-table4
 ```
 
+For a fast compilation-only check, Stage 1 first records the PyTorch-Chipyard
+measurements as above. The following host command appends the TVM-Gemmini
+measurements to the same run and skips target C compilation and RTL execution:
+
+```bash
+bash scripts/run_table4.sh \
+  --resume \
+  --toolchains=tvm \
+  --compile-only \
+  --output-dir=results/table4/stage1-latest
+```
+
+The TVM compilation timer starts immediately before
+`gemmini.preprocess_pass` and ends after `relay.build`, MLF export, and
+microTVM project generation. TFLite model preparation and the generated
+project's C/ELF build are excluded. A later full `run-stage2.sh --only-table4`
+run detects that the compilation-only TVM artifact has no ELF and rebuilds it
+before Verilator execution; the reported compilation interval remains the
+same. Partial compilation-only results remain in their run directory and do
+not replace the stable paper Table 4 outputs.
+
 The experiment intentionally uses each tool's native target:
 PyTorch-Chipyard uses FP32, a DIM=8 Gemmini, four Rocket cores, and FireSim;
 TVM-Gemmini uses INT8, a DIM=16 Gemmini, one Rocket core, and Verilator.

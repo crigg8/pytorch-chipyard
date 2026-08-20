@@ -19,12 +19,16 @@ Measure native compile and cycle-accurate RTL turnaround for three bounded,
 model-derived GEMM kernels. PyTorch-Chipyard uses its FP32 DIM=8 four-core
 FireSim target; TVM-Gemmini uses its INT8 DIM=16 single-core Verilator target.
 The measurements characterize each tool's own workflow and are not a kernel
-performance comparison.
+performance comparison. TVM compilation is timed from gemmini.preprocess_pass
+through Relay build, MLF export, and microTVM project generation; TFLite model
+preparation and target C/ELF construction are excluded.
 
 Options:
   --kernels=LIST       Built-in Table 4 kernel IDs (default: all)
   --toolchains=LIST    pytorch,tvm (default: both)
   --phases=LIST        compile,rtl (default: both)
+  --compile-only       Run only compilation (alias for --phases=compile).
+                       TVM stops after microTVM project generation.
   --repeats=N          Independent trials; report successful medians (default: 1)
   --output-dir=PATH    Result directory (default: results/table4/<UTC run id>)
   --resume             Run only missing/failed measurements in --output-dir
@@ -88,6 +92,7 @@ while [[ "$#" -gt 0 ]]; do
     --toolchains) [[ "$#" -ge 2 ]] || die "--toolchains requires a value"; toolchains_arg="$2"; shift 2 ;;
     --phases=*) phases_arg="${1#*=}"; shift ;;
     --phases) [[ "$#" -ge 2 ]] || die "--phases requires a value"; phases_arg="$2"; shift 2 ;;
+    --compile-only) phases_arg="compile"; shift ;;
     --repeats=*) repeats="${1#*=}"; shift ;;
     --repeats) [[ "$#" -ge 2 ]] || die "--repeats requires a value"; repeats="$2"; shift 2 ;;
     --output-dir=*) output_dir="${1#*=}"; shift ;;
@@ -271,12 +276,26 @@ prepare_tvm() {
 }
 
 run_tvm_compile() {
-  local trial="$1" kernel="$2" artifact log_path wall status force=()
+  local trial="$1" kernel="$2" artifact log_path wall status
+  local needs_elf=0 force=() compile_only_args=()
   artifact="$(tvm_artifact "${kernel}" "${trial}")"
   log_path="${output_dir}/logs/tvm-${kernel}-trial-${trial}-compile.log"
+  if contains rtl "${phases[@]}"; then
+    needs_elf=1
+  else
+    compile_only_args=(--compile-only)
+  fi
   if already_passed "${trial}" "${kernel}" TVM-Gemmini compile ""; then
-    pass "resume TVM-Gemmini compile kernel=${kernel} artifact=${artifact} log=${log_path}"
-    return
+    if ! "${RESULTS_PYTHON}" "${RESULTS_TOOL}" \
+      has-current-tvm-compile-metadata \
+      --metadata "${artifact}/table4-metadata.json"; then
+      log "remeasuring TVM-Gemmini compile because the resumed result uses an outdated timing scope"
+    elif [[ "${needs_elf}" -eq 0 || -s "${artifact}/src/build/dense-baremetal" ]]; then
+      pass "resume TVM-Gemmini compile kernel=${kernel} artifact=${artifact} log=${log_path}"
+      return
+    else
+      log "rebuilding TVM-Gemmini project for RTL because the resumed compile-only artifact has no ELF"
+    fi
   fi
   if [[ "${dry_run}" -eq 1 ]]; then
     log "DRY RUN TVM compile ${kernel} trial ${trial}"
@@ -288,10 +307,12 @@ run_tvm_compile() {
     TABLE4_TVM_AE_ROOT="${TABLE4_TVM_AE_ROOT:-${HOME}/tvm-gemmini-ae}" \
     TABLE4_TVM_BUILD_DIR="${tvm_build_dir}" \
     bash "${SCRIPT_DIR}/tvm-gemmini-table4/compile-kernel.sh" \
-    --kernel "${kernel}" --output-dir "${artifact}" "${force[@]}"
+    --kernel "${kernel}" --output-dir "${artifact}" \
+    "${compile_only_args[@]}" "${force[@]}"
   if [[ "${RUN_RC}" -eq 0 && \
-        -s "${artifact}/src/build/dense-baremetal" && \
+        -s "${artifact}/src/model/tvmgen_default.h" && \
         -s "${artifact}/table4-metadata.json" ]] && \
+     [[ "${needs_elf}" -eq 0 || -s "${artifact}/src/build/dense-baremetal" ]] && \
      wall="$("${RESULTS_PYTHON}" "${RESULTS_TOOL}" extract --log "${log_path}" --key COMPILE_WALL_S)"; then
     status=PASS
   else
@@ -302,7 +323,7 @@ run_tvm_compile() {
   append_result "${trial}" "${kernel}" TVM-Gemmini compile "" "${wall}" \
     "${status}" "${RUN_RC}" "${artifact}" "${log_path}" \
     "int8,gemmini-dim16,rocket-singlecore,verilator" \
-    "Relay/Gemmini compilation; TFLite conversion and generated-project C build excluded"
+    "Gemmini preprocess, Relay build, MLF export, and project generation; TFLite preparation and target C/ELF build excluded"
   if [[ "${status}" == PASS ]]; then
     pass "TVM-Gemmini compile kernel=${kernel} artifact=${artifact} log=${log_path}"
   fi

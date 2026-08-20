@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import csv
+import json
 import sys
 import tempfile
 import unittest
@@ -201,6 +202,34 @@ class TestTable4Results(unittest.TestCase):
                     phase="rtl",
                     simulator="firesim",
                 )
+            )
+
+    def test_tvm_compile_metadata_rejects_old_timing_scope(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metadata_path = Path(temp_dir) / "table4-metadata.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "compile_scope": "relay.build",
+                    }
+                )
+            )
+            self.assertFalse(
+                table4_results.has_current_tvm_compile_metadata(metadata_path)
+            )
+
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "compile_scope": table4_results.TVM_COMPILE_SCOPE,
+                        "compile_excludes": table4_results.TVM_COMPILE_EXCLUDES,
+                    }
+                )
+            )
+            self.assertTrue(
+                table4_results.has_current_tvm_compile_metadata(metadata_path)
             )
 
     def test_latex_uses_seconds_and_na(self):
