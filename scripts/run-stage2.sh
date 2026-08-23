@@ -42,11 +42,15 @@ Options:
   --resume, --resume-firesim
                         Skip ELF/package/image stages, keep collected results,
                         and run only FireSim workloads without complete outputs.
+  --resume-rebuild-images
+                        Skip ELF/package stages, deep-clean Linux/OpenSBI,
+                        rebuild images only for workloads without complete
+                        outputs, then run only those FireSim workloads.
   --resume-from=NAME    Skip ELF/package/image stages, keep collected results,
                         and restart FireSim at workload NAME.
   --rvv-panic-retries=N|unlimited
                         Retry an RVV workload after a detected guest kernel
-                        panic. Default: unlimited; 0 disables retries.
+                        panic. Default: 0; unlimited must be explicit.
   --skip-elves          Skip model-<N>core.elf generation.
   --skip-package        Skip FireMarshal workload/package generation.
   --skip-images         Skip FireMarshal image build/install.
@@ -78,6 +82,7 @@ workload_args=()
 only_alias_first=0
 only_alias_first_cnn_off=0
 resume_firesim=0
+rebuild_pending_images=0
 resume_from_arg=""
 rvv_panic_retries_arg=""
 skip_elves=0
@@ -142,6 +147,14 @@ while [[ "$#" -gt 0 ]]; do
       skip_elves=1
       skip_package=1
       skip_images=1
+      shift
+      ;;
+    --resume-rebuild-images)
+      resume_firesim=1
+      rebuild_pending_images=1
+      skip_elves=1
+      skip_package=1
+      skip_images=0
       shift
       ;;
     --resume-from)
@@ -387,6 +400,9 @@ fi
 if [[ "${skip_images}" -eq 0 ]]; then
   log "building and installing FireMarshal images"
   image_args=()
+  if [[ "${rebuild_pending_images}" -eq 1 ]]; then
+    image_args+=(--pending-only)
+  fi
   if [[ "${alias_first_selected}" -eq 1 ]]; then
     for workload in "${alias_first_workloads[@]}"; do
       image_args+=(--workload="${workload}")

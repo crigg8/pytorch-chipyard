@@ -37,7 +37,7 @@ Options:
                        selected/discovered workload order.
   --rvv-panic-retries=N|unlimited
                        Retry an RVV workload after a detected kernel panic or
-                       corrupt UART. Default: unlimited; 0 disables retries.
+                       corrupt UART. Default: 0; unlimited must be explicit.
   -h, --help           Show this help.
 
 Environment:
@@ -931,7 +931,7 @@ run_workload() {
 SELECTED_WORKLOADS=()
 RESUME_MODE=0
 RESUME_FROM=""
-RVV_PANIC_RETRIES=unlimited
+RVV_PANIC_RETRIES="${PYTORCH_CHIPYARD_RVV_PANIC_RETRIES:-0}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
