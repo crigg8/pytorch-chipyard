@@ -400,7 +400,8 @@ write_workload() {
   local input_path input_base weights_path elf_sha256 input_sha256 weights_sha256
   local workload_dir deploy_workload_dir overlay_dir guest_dir runner_path hook_path
   local workload_json deploy_json workload_config_path places cpu_affinity model_command
-  local omp_first_cpu omp_wait_policy omp_display_affinity gomp_spincount
+  local omp_first_cpu omp_places_override omp_cpu_affinity_override
+  local omp_wait_policy omp_display_affinity gomp_spincount
   local workload_env_suffix omp_first_cpu_var omp_wait_policy_var gomp_spincount_var
   local expect_output_bin runner_check_files output_entries kernel_only=0
 
@@ -458,6 +459,8 @@ write_workload() {
   chmod +x "${guest_dir}/${elf_base}" 2>/dev/null || true
 
   omp_first_cpu=0
+  omp_places_override=""
+  omp_cpu_affinity_override=""
   omp_wait_policy=PASSIVE
   omp_display_affinity=FALSE
   gomp_spincount=0
@@ -476,9 +479,10 @@ write_workload() {
         omp_first_cpu=2
         ;;
       mobilenetv2-rvv-4core)
-        # This workload runs on the physical four-hart target, so place one
-        # model worker on each available hart.
-        omp_first_cpu=0
+        # Split the four RVV workers across the edge pairs of the physical
+        # eight-hart target: harts 0-1 and 6-7.
+        omp_places_override="{0},{1},{6},{7}"
+        omp_cpu_affinity_override="0 1 6 7"
         omp_display_affinity=TRUE
         ;;
       *)
@@ -514,8 +518,13 @@ write_workload() {
   [[ "${gomp_spincount}" == "INFINITE" || "${gomp_spincount}" =~ ^[0-9]+$ ]] || \
     die "invalid ${gomp_spincount_var}='${gomp_spincount}'; expected a non-negative integer or INFINITE"
 
-  places="$(omp_places_for "${core}" "${omp_first_cpu}")"
-  cpu_affinity="$(omp_cpu_affinity_for "${core}" "${omp_first_cpu}")"
+  if [[ -n "${omp_places_override}" ]]; then
+    places="${omp_places_override}"
+    cpu_affinity="${omp_cpu_affinity_override}"
+  else
+    places="$(omp_places_for "${core}" "${omp_first_cpu}")"
+    cpu_affinity="$(omp_cpu_affinity_for "${core}" "${omp_first_cpu}")"
+  fi
   model_command="$(shell_quote "./${elf_base}") $(shell_quote "${input_base}") weights.bin output.bin"
 
   cat >"${workload_config_path}" <<EOF
