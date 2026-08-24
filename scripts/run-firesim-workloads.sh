@@ -364,9 +364,35 @@ override_hw_config_for() {
   return 1
 }
 
+required_hw_config_for() {
+  local workload="$1"
+
+  case "${workload}" in
+    mobilenetv2-rvv-4core)
+      # This workload is validated only on the physical eight-hart Saturn
+      # target. Keep this explicit instead of relying on the generic RVV
+      # four-core mapping so an environment override cannot silently move it
+      # to a four-hart bitstream.
+      printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_8core_no_nic_30mhz"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 infer_hw_config() {
   local workload="$1"
-  local core
+  local core override required
+
+  if required="$(required_hw_config_for "${workload}")"; then
+    if override="$(override_hw_config_for "${workload}")" && \
+        [[ "${override}" != "${required}" ]]; then
+      die "${workload} requires hardware config '${required}', but an environment override selected '${override}'"
+    fi
+    printf '%s\n' "${required}"
+    return 0
+  fi
 
   if override_hw_config_for "${workload}"; then
     return 0
@@ -402,8 +428,8 @@ infer_hw_config() {
         ;;
       4)
         # Every four-thread RVV workload uses the validated eight-hart target.
-        # Worker placement is supplied by the packaged runner; MobileNetV2
-        # uses harts 0-3 and the other validated CNNs use harts 4-7.
+        # Worker placement is supplied by the packaged runner; the four model
+        # threads are isolated on harts 4-7.
         printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_8core_no_nic_30mhz"
         ;;
       *) die "no RVV hardware config mapping for ${workload}" ;;
@@ -423,6 +449,16 @@ infer_hw_config() {
   else
     die "could not infer hardware config for workload '${workload}'; set PYTORCH_CHIPYARD_FIRESIM_HW_CONFIG_$(env_suffix_for_workload "${workload}")"
   fi
+}
+
+validate_required_hw_config() {
+  local workload="$1"
+  local hw_config="$2"
+  local required
+
+  required="$(required_hw_config_for "${workload}")" || return 0
+  [[ "${hw_config}" == "${required}" ]] || \
+    die "${workload} must use hardware config '${required}', got '${hw_config}'"
 }
 
 require_hw_config() {
@@ -996,7 +1032,9 @@ log "FPGA DB: ${fpga_db}"
 
 for workload in "${WORKLOADS[@]}"; do
   hw_config="$(infer_hw_config "${workload}")"
+  validate_required_hw_config "${workload}" "${hw_config}"
   require_hw_config "${hw_config}"
+  log "${workload}: selected hardware config ${hw_config}"
   runtime="$(generate_runtime_config "${workload}" "${hw_config}" "${fpga_db}")"
   marker="${PYTORCH_CHIPYARD_FIRESIM_RUNTIME_DIR}/.${workload}.run-start"
   mkdir -p "$(dirname "${marker}")"

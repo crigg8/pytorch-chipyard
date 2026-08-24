@@ -476,9 +476,10 @@ write_workload() {
         omp_first_cpu=2
         ;;
       mobilenetv2-rvv-4core)
-        # MobileNetV2's validated four-thread placement is harts 0-3 on the
-        # eight-hart 30 MHz target.
-        omp_first_cpu=0
+        # Keep all four RVV workers off the boot/housekeeping harts. The
+        # eight-hart target leaves harts 0-3 available for Linux while the
+        # model remains pinned one worker per hart on harts 4-7.
+        omp_first_cpu=4
         omp_display_affinity=TRUE
         ;;
       *)
