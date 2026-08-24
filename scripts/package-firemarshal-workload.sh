@@ -46,6 +46,13 @@ Environment:
   PYTORCH_CHIPYARD_OMP_FIRST_CPU_<WORKLOAD>
                                             Override the first OpenMP CPU for one
                                             workload. Hyphens become underscores.
+  PYTORCH_CHIPYARD_OMP_PLACES_<WORKLOAD>
+                                            Override the complete OpenMP place list,
+                                            for example {2},{3},{4},{5}. Must be used
+                                            with GOMP_CPU_AFFINITY below.
+  PYTORCH_CHIPYARD_GOMP_CPU_AFFINITY_<WORKLOAD>
+                                            Override the matching CPU list, for
+                                            example "2 3 4 5".
   PYTORCH_CHIPYARD_OMP_WAIT_POLICY_<WORKLOAD>
                                             Override ACTIVE/PASSIVE for one workload.
   PYTORCH_CHIPYARD_GOMP_SPINCOUNT_<WORKLOAD>
@@ -402,7 +409,8 @@ write_workload() {
   local workload_json deploy_json workload_config_path places cpu_affinity model_command
   local omp_first_cpu omp_places_override omp_cpu_affinity_override
   local omp_wait_policy omp_display_affinity gomp_spincount
-  local workload_env_suffix omp_first_cpu_var omp_wait_policy_var gomp_spincount_var
+  local workload_env_suffix omp_first_cpu_var omp_places_var gomp_cpu_affinity_var
+  local omp_wait_policy_var gomp_spincount_var omp_places_env gomp_cpu_affinity_env
   local expect_output_bin runner_check_files output_entries kernel_only=0
 
   elf_base="$(basename "${elf_path}")"
@@ -498,6 +506,8 @@ write_workload() {
 
   workload_env_suffix="$(env_suffix_for_workload "${workload_name}")"
   omp_first_cpu_var="PYTORCH_CHIPYARD_OMP_FIRST_CPU_${workload_env_suffix}"
+  omp_places_var="PYTORCH_CHIPYARD_OMP_PLACES_${workload_env_suffix}"
+  gomp_cpu_affinity_var="PYTORCH_CHIPYARD_GOMP_CPU_AFFINITY_${workload_env_suffix}"
   omp_wait_policy_var="PYTORCH_CHIPYARD_OMP_WAIT_POLICY_${workload_env_suffix}"
   gomp_spincount_var="PYTORCH_CHIPYARD_GOMP_SPINCOUNT_${workload_env_suffix}"
 
@@ -509,6 +519,19 @@ write_workload() {
   fi
   if [[ -n "${!gomp_spincount_var:-}" ]]; then
     gomp_spincount="${!gomp_spincount_var}"
+  fi
+
+  omp_places_env="${!omp_places_var:-}"
+  gomp_cpu_affinity_env="${!gomp_cpu_affinity_var:-}"
+  if [[ -n "${omp_places_env}" || -n "${gomp_cpu_affinity_env}" ]]; then
+    [[ -n "${omp_places_env}" && -n "${gomp_cpu_affinity_env}" ]] || \
+      die "${omp_places_var} and ${gomp_cpu_affinity_var} must be set together"
+    [[ "${omp_places_env}" =~ ^\{[0-9]+\}(,\{[0-9]+\})*$ ]] || \
+      die "invalid ${omp_places_var}='${omp_places_env}'; expected {N},{N},..."
+    [[ "${gomp_cpu_affinity_env}" =~ ^[0-9]+([[:space:]]+[0-9]+)*$ ]] || \
+      die "invalid ${gomp_cpu_affinity_var}='${gomp_cpu_affinity_env}'; expected space-separated CPU numbers"
+    omp_places_override="${omp_places_env}"
+    omp_cpu_affinity_override="${gomp_cpu_affinity_env}"
   fi
 
   [[ "${omp_first_cpu}" =~ ^[0-9]+$ ]] || \
