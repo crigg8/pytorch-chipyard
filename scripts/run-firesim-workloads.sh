@@ -369,11 +369,10 @@ required_hw_config_for() {
 
   case "${workload}" in
     mobilenetv2-rvv-4core)
-      # This workload is validated only on the physical eight-hart Saturn
-      # target. Keep this explicit instead of relying on the generic RVV
-      # four-core mapping so an environment override cannot silently move it
-      # to a four-hart bitstream.
-      printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_8core_no_nic_30mhz"
+      # Keep this experiment on the conservative physical four-hart Saturn
+      # target. Other four-thread RVV workloads retain their eight-hart
+      # placement below.
+      printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic_30mhz"
       ;;
     *)
       return 1

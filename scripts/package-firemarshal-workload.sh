@@ -476,10 +476,9 @@ write_workload() {
         omp_first_cpu=2
         ;;
       mobilenetv2-rvv-4core)
-        # Keep all four RVV workers off the boot/housekeeping harts. The
-        # eight-hart target leaves harts 0-3 available for Linux while the
-        # model remains pinned one worker per hart on harts 4-7.
-        omp_first_cpu=4
+        # This workload runs on the physical four-hart target, so place one
+        # model worker on each available hart.
+        omp_first_cpu=0
         omp_display_affinity=TRUE
         ;;
       *)
