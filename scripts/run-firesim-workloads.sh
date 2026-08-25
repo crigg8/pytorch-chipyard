@@ -175,6 +175,18 @@ unique_workloads() {
   done
 }
 
+elf_has_openmp_symbols() {
+  local elf_path="$1"
+
+  LC_ALL=C readelf -Ws "${elf_path}" 2>/dev/null | awk '
+    NF >= 8 {
+      name = $8
+      if (name ~ /^(GOMP_|omp_)/ || name ~ /_omp_fn/) found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 require_boom_flex_kernel_package() {
   local workload="$1"
   local runner image elf
@@ -198,8 +210,7 @@ require_boom_flex_kernel_package() {
   command -v readelf >/dev/null 2>&1 || \
     die "readelf is required to verify the ${workload} ELF"
   require_file "${elf}"
-  if LC_ALL=C readelf -Ws "${elf}" 2>/dev/null | \
-      grep -Eq 'GOMP_|omp_[[:alnum:]_@.]+|_omp_fn'; then
+  if elf_has_openmp_symbols "${elf}"; then
     die "${workload} ELF still contains OpenMP code; rebuild it with the Spike executable option"
   fi
   if LC_ALL=C readelf -d "${elf}" 2>/dev/null | grep -Fqi 'libgomp'; then

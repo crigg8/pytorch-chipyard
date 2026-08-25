@@ -338,13 +338,24 @@ require_flex_kernel_only_elf() {
   fi
 }
 
+elf_has_openmp_symbols() {
+  local elf_path="$1"
+
+  LC_ALL=C readelf -Ws "${elf_path}" 2>/dev/null | awk '
+    NF >= 8 {
+      name = $8
+      if (name ~ /^(GOMP_|omp_)/ || name ~ /_omp_fn/) found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 require_no_openmp_elf() {
   local elf_path="$1"
 
   command -v readelf >/dev/null 2>&1 || \
     die "readelf is required to verify that BOOM FlexAttention does not link OpenMP"
-  if LC_ALL=C readelf -Ws "${elf_path}" 2>/dev/null | \
-      grep -Eq 'GOMP_|omp_[[:alnum:]_@.]+|_omp_fn'; then
+  if elf_has_openmp_symbols "${elf_path}"; then
     die "${elf_path} still contains OpenMP code; rebuild it with PYTORCH_CHIPYARD_SPIKE_EXECUTABLE=1"
   fi
   if LC_ALL=C readelf -d "${elf_path}" 2>/dev/null | grep -Fqi 'libgomp'; then
