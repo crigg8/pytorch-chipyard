@@ -85,11 +85,12 @@ pc_run_backend_env() {
 
   if [[ "${backend}" == "gemmini" || "${backend}" == "scalar" ]]; then
     env \
+      -u PYTORCH_CHIPYARD_SPIKE_EXECUTABLE \
       -u TRITON_CHIPYARD_RISCV_VARCH \
       "${backend_env[@]}" \
       "$@"
   else
-    env "${backend_env[@]}" "$@"
+    env -u PYTORCH_CHIPYARD_SPIKE_EXECUTABLE "${backend_env[@]}" "$@"
   fi
 }
 
@@ -188,16 +189,45 @@ pc_compile_stamp_path() {
   printf '%s\n' "${artifact_dir}/.pytorch-chipyard-compile-fingerprint"
 }
 
+pc_is_boom_flex_kernel_build() {
+  local backend="$1"
+  local artifact_dir="$2"
+  local core="$3"
+  local rel=""
+  local rel_file="${artifact_dir}/.pytorch-chipyard-workload-rel"
+
+  [[ "${backend}" == "gemmini" && "${core}" == "1" ]] || return 1
+  if [[ -f "${rel_file}" ]]; then
+    rel="$(pc_trim "$(head -n 1 "${rel_file}")")"
+    [[ "${rel}" =~ ^opt/gemmini/(flash|window)/seq[0-9]+$ ]]
+    return
+  fi
+
+  # Backward compatibility for artifacts generated before the metadata file
+  # was introduced.
+  [[ "${artifact_dir}" =~ /artifact-opt/gemmini/(flash|window)/seq[0-9]+$ ]]
+}
+
 pc_build_core_elf() {
   local backend="$1"
   local artifact_dir="$2"
   local core="$3"
 
   pc_require_file "${artifact_dir}/build.sh"
-  pc_log "building ${artifact_dir}/model-${core}core.elf"
   (
     cd "${artifact_dir}"
-    pc_run_backend_env "${backend}" CHIPYARD_OMP_NUM_THREADS="${core}" bash ./build.sh
+    if pc_is_boom_flex_kernel_build "${backend}" "${artifact_dir}" "${core}"; then
+      pc_log "building ${artifact_dir}/model-${core}core.elf (BOOM FlexAttention, OpenMP disabled)"
+      pc_run_backend_env "${backend}" \
+        CHIPYARD_OMP_NUM_THREADS=1 \
+        PYTORCH_CHIPYARD_SPIKE_EXECUTABLE=1 \
+        bash ./build.sh
+    else
+      pc_log "building ${artifact_dir}/model-${core}core.elf"
+      pc_run_backend_env "${backend}" \
+        CHIPYARD_OMP_NUM_THREADS="${core}" \
+        bash ./build.sh
+    fi
     pc_require_file "${artifact_dir}/model.elf"
     cp -f model.elf "model-${core}core.elf"
   )
@@ -227,6 +257,9 @@ pc_build_fingerprint() {
   compile_stamp="$(pc_compile_stamp_path "${artifact_dir}")"
   printf 'backend=%s\n' "${backend}"
   printf 'core=%s\n' "${core}"
+  if pc_is_boom_flex_kernel_build "${backend}" "${artifact_dir}" "${core}"; then
+    printf 'spike_executable=1\n'
+  fi
   printf 'chipyard_env=%s\n' "${PYTORCH_CHIPYARD_REAL_CHIPYARD_ENV_PATH:-${CHIPYARD_ENV_PATH:-}}"
   printf 'riscv_toolchain_bin_dir=%s\n' "${PYTORCH_CHIPYARD_RESOLVED_RISCV_TOOLCHAIN_BIN_DIR:-}"
   printf 'build_script_sha256=%s\n' "$(pc_file_sha256 "${artifact_dir}/build.sh")"

@@ -35,6 +35,8 @@ Generated files:
 Options:
   --artifact-dir=PATH  Package ELF files from this artifact directory only.
                        May be repeated.
+  --core=LIST          Package only the selected core counts, for example 1 or 2,4.
+                       Default: package every ELF in each selected artifact.
   --no-clean            Keep previously generated workload JSONs/overlays.
   --no-chipyard-check   Allow file generation without initialized FireMarshal/FireSim.
   -h, --help            Show this help.
@@ -336,6 +338,20 @@ require_flex_kernel_only_elf() {
   fi
 }
 
+require_no_openmp_elf() {
+  local elf_path="$1"
+
+  command -v readelf >/dev/null 2>&1 || \
+    die "readelf is required to verify that BOOM FlexAttention does not link OpenMP"
+  if LC_ALL=C readelf -Ws "${elf_path}" 2>/dev/null | \
+      grep -Eq 'GOMP_|omp_[[:alnum:]_@.]+|_omp_fn'; then
+    die "${elf_path} still contains OpenMP code; rebuild it with PYTORCH_CHIPYARD_SPIKE_EXECUTABLE=1"
+  fi
+  if LC_ALL=C readelf -d "${elf_path}" 2>/dev/null | grep -Fqi 'libgomp'; then
+    die "${elf_path} still links libgomp; rebuild it with PYTORCH_CHIPYARD_SPIKE_EXECUTABLE=1"
+  fi
+}
+
 clean_generated_workloads() {
   [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" ]] || return 0
 
@@ -412,6 +428,7 @@ write_workload() {
   local workload_env_suffix omp_first_cpu_var omp_places_var gomp_cpu_affinity_var
   local omp_wait_policy_var gomp_spincount_var omp_places_env gomp_cpu_affinity_env
   local expect_output_bin runner_check_files output_entries kernel_only=0
+  local runner_runtime_env runner_runtime_log
 
   elf_base="$(basename "${elf_path}")"
   core="$(infer_core_from_elf "${elf_base}")"
@@ -454,6 +471,7 @@ write_workload() {
   if is_boom_flex_kernel_workload "${workload_name}"; then
     kernel_only=1
     require_flex_kernel_only_elf "${elf_path}"
+    require_no_openmp_elf "${elf_path}"
   fi
 
   cp -f "${elf_path}" "${guest_dir}/${elf_base}"
@@ -466,6 +484,7 @@ write_workload() {
   fi
   chmod +x "${guest_dir}/${elf_base}" 2>/dev/null || true
 
+  if [[ "${kernel_only}" -ne 1 ]]; then
   omp_first_cpu=0
   omp_places_override=""
   omp_cpu_affinity_override=""
@@ -548,9 +567,25 @@ write_workload() {
     places="$(omp_places_for "${core}" "${omp_first_cpu}")"
     cpu_affinity="$(omp_cpu_affinity_for "${core}" "${omp_first_cpu}")"
   fi
+  fi
   model_command="$(shell_quote "./${elf_base}") $(shell_quote "${input_base}") weights.bin output.bin"
 
-  cat >"${workload_config_path}" <<EOF
+  if [[ "${kernel_only}" -eq 1 ]]; then
+    cat >"${workload_config_path}" <<EOF
+workload=${workload_name}
+artifact_dir=${artifact_dir}
+elf_source=${elf_path}
+elf_sha256=${elf_sha256}
+input_source=${input_path}
+input_sha256=${input_sha256}
+weights_source=${weights_path}
+weights_sha256=${weights_sha256}
+rootfs_size=${rootfs_size}
+openmp=disabled
+execution=flex_attention_kernel_only
+EOF
+  else
+    cat >"${workload_config_path}" <<EOF
 workload=${workload_name}
 artifact_dir=${artifact_dir}
 elf_source=${elf_path}
@@ -576,6 +611,7 @@ GOMP_CPU_AFFINITY=${cpu_affinity}
 GOMP_SPINCOUNT=${gomp_spincount}
 MALLOC_ARENA_MAX=1
 EOF
+  fi
 
   expect_output_bin=1
   if [[ "${kernel_only}" -eq 1 ]]; then
@@ -601,21 +637,11 @@ EOF
     \"${guest_root}/${workload_name}/workload-config.txt\""
   fi
 
-  cat >"${runner_path}" <<EOF
-#!/bin/bash
-set -u
-set -o pipefail
-
-ulimit -s unlimited
-cd ${guest_root}/${workload_name}
-
-if [ -b /dev/iceblk ]; then
-  mount -o remount,rw,noatime / 2>/dev/null || \\
-    mount -o remount,rw,noatime /dev/iceblk / 2>/dev/null || true
-else
-  mount -o remount,rw,noatime / 2>/dev/null || true
-fi
-
+  if [[ "${kernel_only}" -eq 1 ]]; then
+    runner_runtime_env=""
+    runner_runtime_log='echo "[runner] openmp=disabled"'
+  else
+    runner_runtime_env="$(cat <<EOF
 export OMP_NUM_THREADS=${core}
 export OMP_THREAD_LIMIT=${core}
 export OMP_STACKSIZE=64M
@@ -631,6 +657,27 @@ export OMP_DISPLAY_AFFINITY=${omp_display_affinity}
 export GOMP_CPU_AFFINITY="${cpu_affinity}"
 export GOMP_SPINCOUNT=${gomp_spincount}
 export MALLOC_ARENA_MAX=1
+EOF
+)"
+    runner_runtime_log='echo "[runner] OMP_NUM_THREADS=${OMP_NUM_THREADS} OMP_THREAD_LIMIT=${OMP_THREAD_LIMIT} OMP_STACKSIZE=${OMP_STACKSIZE} OMP_DYNAMIC=${OMP_DYNAMIC} OMP_MAX_ACTIVE_LEVELS=${OMP_MAX_ACTIVE_LEVELS} OMP_NESTED=${OMP_NESTED} OMP_PROC_BIND=${OMP_PROC_BIND} OMP_PLACES=${OMP_PLACES} OMP_SCHEDULE=${OMP_SCHEDULE} OMP_WAIT_POLICY=${OMP_WAIT_POLICY} GOMP_CPU_AFFINITY=${GOMP_CPU_AFFINITY} GOMP_SPINCOUNT=${GOMP_SPINCOUNT} MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX}"'
+  fi
+
+  cat >"${runner_path}" <<EOF
+#!/bin/bash
+set -u
+set -o pipefail
+
+ulimit -s unlimited
+cd ${guest_root}/${workload_name}
+
+if [ -b /dev/iceblk ]; then
+  mount -o remount,rw,noatime / 2>/dev/null || \\
+    mount -o remount,rw,noatime /dev/iceblk / 2>/dev/null || true
+else
+  mount -o remount,rw,noatime / 2>/dev/null || true
+fi
+
+${runner_runtime_env}
 
 chmod +x ./${elf_base} 2>/dev/null || true
 rm -f output.bin run.log model.log autotune.log
@@ -638,7 +685,7 @@ rm -f output.bin run.log model.log autotune.log
 exec >./run.log 2>&1
 
 echo "[runner] start ${workload_name}"
-echo "[runner] OMP_NUM_THREADS=\${OMP_NUM_THREADS} OMP_THREAD_LIMIT=\${OMP_THREAD_LIMIT} OMP_STACKSIZE=\${OMP_STACKSIZE} OMP_DYNAMIC=\${OMP_DYNAMIC} OMP_MAX_ACTIVE_LEVELS=\${OMP_MAX_ACTIVE_LEVELS} OMP_NESTED=\${OMP_NESTED} OMP_PROC_BIND=\${OMP_PROC_BIND} OMP_PLACES=\${OMP_PLACES} OMP_SCHEDULE=\${OMP_SCHEDULE} OMP_WAIT_POLICY=\${OMP_WAIT_POLICY} GOMP_CPU_AFFINITY=\${GOMP_CPU_AFFINITY} GOMP_SPINCOUNT=\${GOMP_SPINCOUNT} MALLOC_ARENA_MAX=\${MALLOC_ARENA_MAX}"
+${runner_runtime_log}
 echo "[runner] elf_sha256=${elf_sha256}"
 ${model_command}
 rc=\$?
@@ -695,6 +742,7 @@ EOF
 
 artifact_root="${WORKSPACE}/examples"
 artifact_dir_args=()
+selected_cores=()
 check_chipyard=1
 clean_workloads=1
 rootfs_size="${PYTORCH_CHIPYARD_FIREMARSHAL_ROOTFS_SIZE:-8GiB}"
@@ -708,6 +756,17 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --artifact-dir=*)
       artifact_dir_args+=("${1#--artifact-dir=}")
+      shift
+      ;;
+    --core)
+      [[ "$#" -ge 2 ]] || die "--core requires a value"
+      IFS=, read -r -a requested_cores <<<"$2"
+      selected_cores+=("${requested_cores[@]}")
+      shift 2
+      ;;
+    --core=*)
+      IFS=, read -r -a requested_cores <<<"${1#--core=}"
+      selected_cores+=("${requested_cores[@]}")
       shift
       ;;
     --no-clean)
@@ -727,6 +786,22 @@ while [[ "$#" -gt 0 ]]; do
       ;;
   esac
 done
+
+for selected_core in "${selected_cores[@]}"; do
+  [[ "${selected_core}" =~ ^[0-9]+$ && "${selected_core}" != "0" ]] || \
+    die "invalid core count '${selected_core}'"
+done
+
+core_is_selected() {
+  local core="$1"
+  local selected
+
+  [[ "${#selected_cores[@]}" -gt 0 ]] || return 0
+  for selected in "${selected_cores[@]}"; do
+    [[ "${selected}" == "${core}" ]] && return 0
+  done
+  return 1
+}
 
 artifact_root="$(abs_dir "${artifact_root}")"
 ARTIFACT_ROOT="${artifact_root}"
@@ -780,6 +855,9 @@ for elf_path in "${elf_paths[@]}"; do
   elf_base="$(basename "${elf_path}")"
   core="$(infer_core_from_elf "${elf_base}")"
   [[ -n "${core}" ]] || die "could not infer core count from ${elf_path}"
+  if ! core_is_selected "${core}"; then
+    continue
+  fi
   if ! elf_is_in_build_plan "${artifact_dir}" "${core}"; then
     warn "skipping stale ${elf_path}; core ${core} is not in ${artifact_dir}/.pytorch-chipyard-build-cores"
     continue

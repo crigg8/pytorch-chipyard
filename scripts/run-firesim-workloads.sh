@@ -177,7 +177,7 @@ unique_workloads() {
 
 require_boom_flex_kernel_package() {
   local workload="$1"
-  local runner image
+  local runner image elf
 
   case "${workload}" in
     opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core) ;;
@@ -185,10 +185,26 @@ require_boom_flex_kernel_package() {
   esac
 
   runner="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}/root/llm/run_${workload}.sh"
+  elf="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}/root/llm/${workload}/model-1core.elf"
   image="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}.img"
   require_file "${runner}"
   grep -Fq -- '--kernel-only=flex_attention' "${runner}" || \
     die "${workload} was packaged for full-model execution; rerun Stage 2 without --resume-from/--resume to regenerate its ELF, package, and image"
+  grep -Fq -- '[runner] openmp=disabled' "${runner}" || \
+    die "${workload} runner does not disable OpenMP; rebuild its ELF and repackage the workload"
+  if grep -Eq 'OMP_|GOMP_' "${runner}"; then
+    die "${workload} runner still configures OpenMP; repackage the workload"
+  fi
+  command -v readelf >/dev/null 2>&1 || \
+    die "readelf is required to verify the ${workload} ELF"
+  require_file "${elf}"
+  if LC_ALL=C readelf -Ws "${elf}" 2>/dev/null | \
+      grep -Eq 'GOMP_|omp_[[:alnum:]_@.]+|_omp_fn'; then
+    die "${workload} ELF still contains OpenMP code; rebuild it with the Spike executable option"
+  fi
+  if LC_ALL=C readelf -d "${elf}" 2>/dev/null | grep -Fqi 'libgomp'; then
+    die "${workload} ELF still links libgomp; rebuild it with the Spike executable option"
+  fi
   require_file "${image}"
   [[ "${image}" -nt "${runner}" ]] || \
     die "${workload} FireMarshal image predates its kernel-only runner; rebuild the image before FireSim execution"
