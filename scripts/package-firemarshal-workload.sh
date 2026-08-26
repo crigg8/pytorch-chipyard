@@ -369,6 +369,11 @@ clean_generated_workloads() {
   find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" \
     -maxdepth 1 \
     -type f \
+    -name '.pytorch-chipyard-*-linux-config' \
+    -delete
+  find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" \
+    -maxdepth 1 \
+    -type f \
     -name '*.json' \
     ! -name '*base.json' \
     -delete
@@ -433,7 +438,8 @@ write_workload() {
   local elf_base core kind guest_root guest_root_rel
   local input_path input_base weights_path elf_sha256 input_sha256 weights_sha256
   local workload_dir deploy_workload_dir overlay_dir guest_dir runner_path hook_path
-  local workload_json deploy_json workload_config_path places cpu_affinity model_command
+  local workload_json deploy_json workload_config_path linux_config_path linux_json_entry
+  local places cpu_affinity model_command
   local omp_first_cpu omp_places_override omp_cpu_affinity_override
   local omp_wait_policy omp_display_affinity gomp_spincount
   local workload_env_suffix omp_first_cpu_var omp_places_var gomp_cpu_affinity_var
@@ -476,6 +482,8 @@ write_workload() {
   workload_json="${workload_dir}/${workload_name}.json"
   deploy_json="${deploy_workload_dir}/${workload_name}.json"
   workload_config_path="${guest_dir}/workload-config.txt"
+  linux_config_path="${workload_dir}/.pytorch-chipyard-${workload_name}-linux-config"
+  linux_json_entry=""
 
   mkdir -p "${guest_dir}" "${deploy_workload_dir}" "$(dirname "${runner_path}")"
 
@@ -483,6 +491,15 @@ write_workload() {
     kernel_only=1
     require_flex_kernel_only_elf "${elf_path}"
     require_no_openmp_elf "${elf_path}"
+
+    # The physical target is the validated dual-BOOM bitstream, but Linux must
+    # keep hart 1 offline. Bringing both BOOM harts online hangs in S02sysctl;
+    # maxcpus=1 was validated through the FlexAttention runner and model_ret=0.
+    cat >"${linux_config_path}" <<'EOF'
+CONFIG_CMDLINE="maxcpus=1 console=ttySIF0,3686400 earlycon"
+EOF
+    printf -v linux_json_entry \
+      '  "linux": {"config": "%s"},\n' "$(basename "${linux_config_path}")"
   fi
 
   cp -f "${elf_path}" "${guest_dir}/${elf_base}"
@@ -594,6 +611,7 @@ weights_sha256=${weights_sha256}
 rootfs_size=${rootfs_size}
 openmp=disabled
 execution=flex_attention_kernel_only
+linux_maxcpus=1
 EOF
   else
     cat >"${workload_config_path}" <<EOF
@@ -726,7 +744,7 @@ EOF
   "workdir": ".",
   "base": "br-base.json",
   "rootfs-size": "${rootfs_size}",
-  "overlay": "overlay-${workload_name}",
+${linux_json_entry}  "overlay": "overlay-${workload_name}",
   "command": "bash ${guest_root}/run_${workload_name}.sh",
   "outputs": [
 ${output_entries}

@@ -189,7 +189,7 @@ elf_has_openmp_symbols() {
 
 require_boom_flex_kernel_package() {
   local workload="$1"
-  local runner image elf
+  local runner image elf bootbinary workload_json linux_config
 
   case "${workload}" in
     opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core) ;;
@@ -199,6 +199,9 @@ require_boom_flex_kernel_package() {
   runner="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}/root/llm/run_${workload}.sh"
   elf="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}/root/llm/${workload}/model-1core.elf"
   image="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}.img"
+  bootbinary="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}-bin"
+  workload_json="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
+  linux_config="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/.pytorch-chipyard-${workload}-linux-config"
   require_file "${runner}"
   grep -Fq -- '--kernel-only=flex_attention' "${runner}" || \
     die "${workload} was packaged for full-model execution; rerun Stage 2 without --resume-from/--resume to regenerate its ELF, package, and image"
@@ -216,7 +219,16 @@ require_boom_flex_kernel_package() {
   if LC_ALL=C readelf -d "${elf}" 2>/dev/null | grep -Fqi 'libgomp'; then
     die "${workload} ELF still links libgomp; rebuild it with the Spike executable option"
   fi
+  require_file "${workload_json}"
+  require_file "${linux_config}"
+  grep -Fq 'CONFIG_CMDLINE="maxcpus=1 console=ttySIF0,3686400 earlycon"' "${linux_config}" || \
+    die "${workload} Linux config does not keep BOOM hart 1 offline; repackage the workload"
+  grep -Fq "\"config\": \"$(basename "${linux_config}")\"" "${workload_json}" || \
+    die "${workload} workload JSON does not reference its maxcpus=1 Linux config; repackage the workload"
   require_file "${image}"
+  require_file "${bootbinary}"
+  LC_ALL=C grep -aFq 'maxcpus=1 console=ttySIF0,3686400 earlycon' "${bootbinary}" || \
+    die "${workload} boot binary was not built with maxcpus=1; rebuild its FireMarshal image"
   [[ "${image}" -nt "${runner}" ]] || \
     die "${workload} FireMarshal image predates its kernel-only runner; rebuild the image before FireSim execution"
 }
@@ -395,6 +407,9 @@ required_hw_config_for() {
   local workload="$1"
 
   case "${workload}" in
+    opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core)
+      printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic"
+      ;;
     mobilenetv2-rvv-4core)
       # Run this placement experiment on the physical eight-hart Saturn
       # target. The packaged runner selects the non-contiguous worker harts.
@@ -428,7 +443,7 @@ infer_hw_config() {
 
   if contains_tag "${workload}" "boom"; then
     case "${core}" in
-      1) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_1core_no_nic" ;;
+      1) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic" ;;
       2) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic" ;;
       4) printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_4core_no_nic" ;;
       *) die "no BOOM hardware config mapping for ${workload}" ;;
