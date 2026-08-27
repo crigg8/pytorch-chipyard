@@ -11,16 +11,6 @@ have already configured:
 - Chipyard/FireSim, the FPGA bitstreams, XRT/Vivado, and FPGA device access;
 - the RISC-V toolchain and the TVM-Gemmini/Verilator environment used by
   Table 4;
-- rootless Docker access for the AE account;
-- passwordless SSH from the AE account to `localhost` for the local run farm;
-- shared FireMarshal/FireSim output directories writable by the `firesim`
-  group; and
-- `CHIPYARD_DIR` and `TABLE4_TVM_AE_ROOT` defined by the AE account's
-  `~/.ae-env.sh`, with that file loaded by `.bashrc`.
-
-These are host/account setup tasks performed once by the administrator. They
-are not repeated for each clone or experiment. On the authors' review server,
-they are already complete.
 
 ## 1. Clone and build the Stage 1 image
 
@@ -112,65 +102,12 @@ bash scripts/run-stage2.sh
 
 Stage 2 builds the ELF files and FireMarshal images, runs the ordinary FireSim
 workloads, and completes Table 4 with PyTorch-Chipyard/FireSim and
-TVM-Gemmini/Verilator. It builds the Verilator simulator once if necessary;
-that setup cost is not included in the table. RVV guest kernel failures are
-retried automatically; other failures stop the workflow.
-
+TVM-Gemmini/Verilator.
 Stage 2 validates workflow completion rather than comparing model output with
 an eager-mode numerical reference. Each FireSim workload must terminate
 successfully and produce its expected `model.log`, `autotune.log`, and output
-artifact (`output.bin` when the workload has an output). A successful run prints
-their paths and ends with
-`STAGE2_STATUS=PASS`. The Table 4 workflow additionally requires all sampled
-kernel measurements and a complete summary CSV before printing
-`TABLE4_STATUS=PASS`.
-
-LLM workloads run with `--no-output`, so their completion check requires only
-the execution logs (`model.log` and `autotune.log`), not `output.bin`.
-
-To reproduce only the bounded Table 4 experiment, use the same Docker mount
-options as above and replace the Stage 1 command with:
-
-```bash
-bash scripts/run-stage1.sh --only-table4
-```
-
-Then run the host part with:
-
-```bash
-bash scripts/run-stage2.sh --only-table4
-```
-
-For a fast compilation-only check, Stage 1 first records the PyTorch-Chipyard
-measurements as above. The following host command appends the TVM-Gemmini
-measurements to the same run and skips target C compilation and RTL execution:
-
-```bash
-bash scripts/run_table4.sh \
-  --resume \
-  --toolchains=tvm \
-  --compile-only \
-  --output-dir=results/table4/stage1-latest
-```
-
-The TVM compilation timer starts immediately before
-`gemmini.preprocess_pass` and ends after `relay.build`, MLF export, and
-microTVM project generation. TFLite model preparation and the generated
-project's C/ELF build are excluded. A later full `run-stage2.sh --only-table4`
-run detects that the compilation-only TVM artifact has no ELF and rebuilds it
-before Verilator execution; the reported compilation interval remains the
-same. Partial compilation-only results remain in their run directory and do
-not replace the stable paper Table 4 outputs.
-
-The experiment intentionally uses each tool's native target:
-PyTorch-Chipyard uses FP32, a DIM=8 Gemmini, four Rocket cores, and FireSim;
-TVM-Gemmini uses INT8, a DIM=16 Gemmini, one Rocket core, and Verilator.
-Consequently, the reported values characterize practical compile and
-cycle-accurate RTL turnaround for each workflow; they must not be interpreted
-as a cross-tool kernel-performance speedup. The TVM path compiles against the
-Gemmini headers generated for the selected Chipyard Verilator target and
-rejects a run if those headers have drifted, so the older headers vendored by
-TVM-Gemmini cannot silently mismatch the RTL simulator.
+artifact.
+A successful run prints their paths and ends with `STAGE2_STATUS=PASS`. 
 
 ## 5. Generate the paper outputs
 
