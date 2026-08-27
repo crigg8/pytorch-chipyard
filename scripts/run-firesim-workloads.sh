@@ -410,6 +410,12 @@ required_hw_config_for() {
     opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core)
       printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic"
       ;;
+    resnet50-rvv-2core)
+      # The packaged two-thread runner pins its workers to harts 0-1. Use the
+      # stable physical four-hart target while leaving every other RVV mapping
+      # unchanged.
+      printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic_30mhz"
+      ;;
     mobilenetv2-rvv-4core)
       # Run this placement experiment on the physical eight-hart Saturn
       # target. The packaged runner selects the non-contiguous worker harts.

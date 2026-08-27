@@ -527,6 +527,12 @@ EOF
     gomp_spincount=INFINITE
 
     case "${workload_name}" in
+      resnet50-rvv-2core)
+        # Run the two ResNet50 workers on harts 0-1 of the physical four-hart
+        # target. Keep this explicit so future RVV defaults cannot silently
+        # change the placement used by the recovery experiment.
+        omp_first_cpu=0
+        ;;
       mobilenetv2-rvv-2core)
         # This two-thread ELF faults when it saturates the physical two-hart
         # target. It is validated on the four-hart 30 MHz target with the
