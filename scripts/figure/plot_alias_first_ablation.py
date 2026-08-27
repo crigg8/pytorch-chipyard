@@ -22,7 +22,7 @@ FIGURE_DIR = ROOT_DIR / "figures"
 OUT_STEM = "alias_first_ablation"
 
 WIDTH_CM = 8.6
-HEIGHT_CM = 4.4
+HEIGHT_CM = 2.8
 FONT_SIZE_PT = 6.4
 
 MODEL_ORDER = [
@@ -87,7 +87,7 @@ def main() -> None:
     width = 0.26
 
     fig, ax = plt.subplots(figsize=size_cm(WIDTH_CM, HEIGHT_CM), dpi=300)
-    fig.subplots_adjust(left=0.145, right=0.99, top=0.88, bottom=0.30)
+    fig.subplots_adjust(left=0.145, right=0.99, top=0.88, bottom=0.40)
 
     off_bars = ax.bar(
         x - width / 2,
@@ -112,6 +112,7 @@ def main() -> None:
 
     upper = max(1.5, float(frame["speedup"].max()) * 1.18)
     ax.set_ylim(0.0, upper)
+    ax.set_yticks([0.0, 1.0, 2.0, 3.0])
     ax.set_ylabel("Norm. Perf.", labelpad=1.0)
     ax.set_xticks(x)
     ax.set_xticklabels(

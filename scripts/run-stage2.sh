@@ -27,6 +27,14 @@ Run the Stage 2 host workflow in order:
      when running the complete, non-selective workflow.
 
 Options:
+  --experiment=NAME     Run one resumable paper experiment unit. NAME is one of:
+                          figures-7-8-9-table5
+                          figure-10
+                          figure-11
+                          figure-13
+                          table-4
+                        Completed ordinary workloads are detected under the
+                        collected results directory and skipped automatically.
   --riscv-toolchain-dir=PATH
                         RISC-V toolchain root or bin dir containing
                         riscv64-unknown-linux-gnu-g++.
@@ -79,6 +87,12 @@ chipyard_env_arg=""
 riscv_toolchain_dir_arg=""
 riscv_gxx_arg=""
 workload_args=()
+experiment_arg=""
+experiment_name=""
+experiment_selected=0
+experiment_artifact_dirs=()
+experiment_workloads=()
+experiment_pending_workloads=()
 only_alias_first=0
 only_alias_first_cnn_off=0
 resume_firesim=0
@@ -132,6 +146,15 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --workload=*)
       workload_args+=("$1")
+      shift
+      ;;
+    --experiment)
+      [[ "$#" -ge 2 ]] || die "--experiment requires a value"
+      experiment_arg="$2"
+      shift 2
+      ;;
+    --experiment=*)
+      experiment_arg="${1#--experiment=}"
       shift
       ;;
     --only-alias-first | --only-alias-first-ablation)
@@ -237,6 +260,140 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+if [[ -n "${experiment_arg}" ]]; then
+  if [[ "${#workload_args[@]}" -gt 0 || "${only_alias_first}" -eq 1 || \
+        "${only_alias_first_cnn_off}" -eq 1 || "${only_table4}" -eq 1 || \
+        "${resume_firesim}" -eq 1 || -n "${resume_from_arg}" ]]; then
+    die "--experiment cannot be combined with another workload, resume, or only-selection option"
+  fi
+
+  case "${experiment_arg}" in
+    figures-7-8-9-table5 | fig7-8-9-table5 | fig7-9-table5)
+      experiment_name="figures-7-8-9-table5"
+      ;;
+    figure-10 | fig10)
+      experiment_name="figure-10"
+      ;;
+    figure-11 | fig11)
+      experiment_name="figure-11"
+      ;;
+    figure-13 | fig13)
+      experiment_name="figure-13"
+      ;;
+    table-4 | table4)
+      experiment_name="table-4"
+      ;;
+    *)
+      die "unknown experiment '${experiment_arg}'; expected figures-7-8-9-table5, figure-10, figure-11, figure-13, or table-4"
+      ;;
+  esac
+
+  if [[ "${experiment_name}" == "table-4" ]]; then
+    only_table4=1
+  else
+    experiment_selected=1
+    resume_firesim=1
+    skip_table4=1
+
+    case "${experiment_name}" in
+      figures-7-8-9-table5)
+        # Figures 7 and 8 use every baseline CNN target. Figure 9 reuses the
+        # four-core Gemmini baselines and adds the alias-first ablations.
+        # Table 5 reuses those CNN baselines and adds four-core LLM prefills.
+        for model in alexnet mobilenetv2 resnet50 squeezenet; do
+          for backend in gemmini rvv scalar; do
+            experiment_artifact_dirs+=(
+              "${REPO_ROOT}/examples/artifact-${model}/${backend}"
+            )
+            case "${backend}" in
+              gemmini | rvv) cores=(2 4) ;;
+              scalar) cores=(4 8 16) ;;
+            esac
+            for core in "${cores[@]}"; do
+              experiment_workloads+=("${model}-${backend}-${core}core")
+            done
+          done
+
+          experiment_artifact_dirs+=(
+            "${REPO_ROOT}/examples/artifact-${model}/gemmini-alias-first-off"
+          )
+          experiment_workloads+=(
+            "${model}-gemmini-alias-first-off-4core"
+          )
+        done
+
+        for model in gpt2 gpt-neo opt pythia; do
+          for mode in on off; do
+            experiment_artifact_dirs+=(
+              "${REPO_ROOT}/examples/artifact-${model}/gemmini/sdpa/seq256/alias-first-${mode}"
+            )
+            experiment_workloads+=(
+              "${model}-gemmini-sdpa-256tok-alias-first-${mode}-4core"
+            )
+          done
+        done
+
+        for model in gpt2 gpt-neo; do
+          experiment_artifact_dirs+=(
+            "${REPO_ROOT}/examples/artifact-${model}/gemmini"
+          )
+          experiment_workloads+=("${model}-gemmini-4core")
+        done
+        for model in opt pythia; do
+          experiment_artifact_dirs+=(
+            "${REPO_ROOT}/examples/artifact-${model}/gemmini/sdpa/seq256"
+          )
+          experiment_workloads+=(
+            "${model}-rocket-gemmini-sdpa-256tok-4core"
+          )
+        done
+        ;;
+      figure-10)
+        # Figure 10 compares im2col against the same four-core direct Gemmini
+        # runs already used by Figures 7--9.
+        for model in alexnet mobilenetv2 resnet50 squeezenet; do
+          experiment_artifact_dirs+=(
+            "${REPO_ROOT}/examples/artifact-${model}/gemmini"
+            "${REPO_ROOT}/examples/artifact-${model}/gemmini-im2col"
+          )
+          experiment_workloads+=(
+            "${model}-gemmini-4core"
+            "${model}-gemmini-im2col-4core"
+          )
+        done
+        ;;
+      figure-11)
+        experiment_artifact_dirs+=(
+          "${REPO_ROOT}/examples/artifact-gemmini-max-autotune/gemmini"
+        )
+        experiment_workloads+=("gemmini-max-autotune-gemmini-4core")
+        ;;
+      figure-13)
+        # Figure 13 reuses the OPT/Pythia seq=256 SDPA runs from Table 5 and
+        # adds the remaining SDPA, FlashAttention, and windowed-attention runs.
+        for model in opt pythia; do
+          for attention in sdpa flash window; do
+            for seq_len in 256 512 768 1024; do
+              experiment_artifact_dirs+=(
+                "${REPO_ROOT}/examples/artifact-${model}/gemmini/${attention}/seq${seq_len}"
+              )
+              experiment_workloads+=(
+                "${model}-rocket-gemmini-${attention}-${seq_len}tok-4core"
+              )
+              if [[ "${model}" == "opt" && "${attention}" != "sdpa" ]]; then
+                experiment_workloads+=(
+                  "${model}-boom-gemmini-${attention}-${seq_len}tok-1core"
+                )
+              fi
+            done
+          done
+        done
+        ;;
+    esac
+    log "selected ${experiment_name}: ${#experiment_workloads[@]} workload(s)"
+  fi
+fi
+
 alias_first_workloads=()
 alias_first_artifact_dirs=()
 alias_first_selected=0
@@ -314,7 +471,13 @@ fi
 
 # Stage 2 runs may be invoked one workload at a time. Preserve results collected
 # by earlier invocations unless cleanup is explicitly requested by the caller.
-export PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS="${PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS:-0}"
+# Experiment units are always resumable, so their collected results must remain
+# available for the per-workload completion check below.
+if [[ "${experiment_selected}" -eq 1 ]]; then
+  export PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS=0
+else
+  export PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS="${PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS:-0}"
+fi
 
 account_env="${PYTORCH_CHIPYARD_ACCOUNT_ENV:-${TABLE4_ACCOUNT_ENV:-${HOME}/.ae-env.sh}}"
 if [[ -f "${account_env}" ]]; then
@@ -329,6 +492,56 @@ source "${SCRIPT_DIR}/env.sh"
 set -u
 
 cd "${REPO_ROOT}"
+
+should_collect_output_bin() {
+  local workload="$1"
+
+  case "${workload}" in
+    gpt2-* | gpt-neo-* | opt-* | pythia-* | *tok*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+collected_result_complete() {
+  local workload="$1"
+  local result_dir="${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}/${workload}"
+
+  [[ -f "${result_dir}/.completed" ]] || return 1
+  [[ -s "${result_dir}/model.log" ]] || return 1
+  [[ -s "${result_dir}/autotune.log" ]] || return 1
+  if should_collect_output_bin "${workload}"; then
+    [[ -s "${result_dir}/output.bin" ]] || return 1
+  fi
+  if [[ -f "${result_dir}/run.log" ]]; then
+    grep -Fq '[runner] model_ret=0' "${result_dir}/run.log" || return 1
+  fi
+}
+
+if [[ "${experiment_selected}" -eq 1 ]]; then
+  completed_workloads=0
+  for workload in "${experiment_workloads[@]}"; do
+    if collected_result_complete "${workload}"; then
+      completed_workloads=$((completed_workloads + 1))
+      log "${experiment_name}: skipping completed workload ${workload}"
+    else
+      experiment_pending_workloads+=("${workload}")
+      workload_args+=("--workload=${workload}")
+    fi
+  done
+
+  log "${experiment_name}: ${completed_workloads} complete, ${#experiment_pending_workloads[@]} pending"
+  if [[ "${#experiment_pending_workloads[@]}" -eq 0 ]]; then
+    skip_elves=1
+    skip_package=1
+    skip_images=1
+    skip_firesim=1
+    log "${experiment_name}: every required workload is already complete"
+  fi
+fi
 
 if [[ "${skip_table4}" -eq 0 ]]; then
   table4_script="${SCRIPT_DIR}/run_table4.sh"
@@ -372,7 +585,11 @@ fi
 if [[ -n "${riscv_gxx_arg}" ]]; then
   build_elves_args+=(--riscv-gxx="${riscv_gxx_arg}")
 fi
-if [[ "${alias_first_selected}" -eq 1 ]]; then
+if [[ "${experiment_selected}" -eq 1 ]]; then
+  for artifact_dir in "${experiment_artifact_dirs[@]}"; do
+    build_elves_args+=(--artifact-dir="${artifact_dir}")
+  done
+elif [[ "${alias_first_selected}" -eq 1 ]]; then
   for artifact_dir in "${alias_first_artifact_dirs[@]}"; do
     build_elves_args+=(--artifact-dir="${artifact_dir}")
   done
@@ -388,7 +605,11 @@ fi
 if [[ "${skip_package}" -eq 0 ]]; then
   log "packaging FireMarshal/FireSim workloads from examples"
   package_args=()
-  if [[ "${alias_first_selected}" -eq 1 ]]; then
+  if [[ "${experiment_selected}" -eq 1 ]]; then
+    for artifact_dir in "${experiment_artifact_dirs[@]}"; do
+      package_args+=(--artifact-dir="${artifact_dir}")
+    done
+  elif [[ "${alias_first_selected}" -eq 1 ]]; then
     for artifact_dir in "${alias_first_artifact_dirs[@]}"; do
       package_args+=(--artifact-dir="${artifact_dir}")
     done
@@ -403,7 +624,11 @@ if [[ "${skip_images}" -eq 0 ]]; then
   if [[ "${rebuild_pending_images}" -eq 1 ]]; then
     image_args+=(--pending-only)
   fi
-  if [[ "${alias_first_selected}" -eq 1 ]]; then
+  if [[ "${experiment_selected}" -eq 1 ]]; then
+    for workload in "${experiment_pending_workloads[@]}"; do
+      image_args+=(--workload="${workload}")
+    done
+  elif [[ "${alias_first_selected}" -eq 1 ]]; then
     for workload in "${alias_first_workloads[@]}"; do
       image_args+=(--workload="${workload}")
     done
@@ -441,5 +666,8 @@ if [[ "${skip_table4}" -eq 0 ]]; then
 fi
 
 log "done; run bash scripts/run-plot.sh to generate figures"
+if [[ -n "${experiment_name}" ]]; then
+  printf 'STAGE2_EXPERIMENT=%s\n' "${experiment_name}"
+fi
 printf 'STAGE2_RESULTS_DIR=%s\n' "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}"
 printf 'STAGE2_STATUS=PASS\n'

@@ -96,12 +96,47 @@ environment once before running it. `run-stage2.sh` also sources
 ```bash
 source ~/.bashrc
 cd ~/pytorch-chipyard
+```
 
+The complete Stage 2 workflow takes a long time, so the recommended AE flow is
+split into five independently resumable experiment units:
+
+```bash
+# Figures 7, 8, and 9, plus Table 5
+bash scripts/run-stage2.sh --experiment=figures-7-8-9-table5
+
+# Figure 10
+bash scripts/run-stage2.sh --experiment=figure-10
+
+# Figure 11
+bash scripts/run-stage2.sh --experiment=figure-11
+
+# Figure 13
+bash scripts/run-stage2.sh --experiment=figure-13
+
+# Table 4
+bash scripts/run-stage2.sh --experiment=table-4
+```
+
+The units may be run in any order and may be rerun after an interruption. For
+ordinary FireSim workloads, Stage 2 checks
+`scripts/figures/results-workload/<workload>/` before doing work. A workload is
+skipped when its completion marker, `model.log`, `autotune.log`, and required
+output artifact are already complete. This also avoids rerunning shared
+experiments: for example, Figure 10 reuses the direct-convolution Gemmini runs
+from Figures 7--9, and Figure 13 reuses the 256-token SDPA runs from Table 5.
+Table 4 similarly resumes completed measurements recorded in
+`results/table4/stage1-latest/raw.csv`.
+
+The original one-shot command remains available when a single uninterrupted
+run is preferred:
+
+```bash
 bash scripts/run-stage2.sh
 ```
 
-Stage 2 builds the ELF files and FireMarshal images, runs the ordinary FireSim
-workloads, and completes Table 4 with PyTorch-Chipyard/FireSim and
+Stage 2 builds the required ELF files and FireMarshal images, runs the selected
+FireSim workloads, and completes Table 4 with PyTorch-Chipyard/FireSim and
 TVM-Gemmini/Verilator.
 Stage 2 validates workflow completion rather than comparing model output with
 an eager-mode numerical reference. Each FireSim workload must terminate
@@ -121,8 +156,6 @@ bash scripts/run-plot.sh
 Generated figures use the semantic filenames referenced by the paper source
 under `scripts/figures/`. The plotting workflow checks every generated plot
 referenced by the paper, prints each path, and ends with `FIGURES_STATUS=PASS`.
-Figure 12 is pseudocode typeset directly in LaTeX, so it has no generated plot
-file to check.
 A complete Table 4 run writes `scripts/figures/table4.csv` and
 `scripts/figures/table4_rows.tex`. Raw logs, target metadata, compiler artifacts,
 and intermediate results remain under `results/table4/`.
