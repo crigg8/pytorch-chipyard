@@ -584,6 +584,44 @@ should_collect_output_bin() {
   esac
 }
 
+count_stage2_files() {
+  local root="$1"
+  local pattern="$2"
+  local count=0
+  local path
+
+  [[ -d "${root}" ]] || {
+    printf '0\n'
+    return
+  }
+  while IFS= read -r -d '' path; do
+    count=$((count + 1))
+  done < <(find "${root}" -type f -name "${pattern}" -print0)
+  printf '%s\n' "${count}"
+}
+
+validate_packaged_workloads() {
+  local workload_count=0
+  local workload_json workload
+
+  [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" ]] || \
+    die "FireMarshal workload directory was not generated: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
+  while IFS= read -r -d '' workload_json; do
+    workload="$(basename -- "${workload_json}" .json)"
+    [[ -s "${workload_json}" ]] || die "generated workload JSON is empty: ${workload_json}"
+    [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}" ]] || \
+      die "generated workload overlay is missing: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}"
+    [[ -s "${FIRESIM_WORKLOAD_DIR}/${workload}.json" ]] || \
+      die "generated FireSim workload JSON is missing or empty: ${FIRESIM_WORKLOAD_DIR}/${workload}.json"
+    workload_count=$((workload_count + 1))
+  done < <(find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" \
+    -maxdepth 1 -type f -name '*.json' ! -name '*base.json' -print0 | sort -z)
+
+  [[ "${workload_count}" -gt 0 ]] || \
+    die "workload packaging produced no usable workloads under ${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
+  printf '%s\n' "${workload_count}"
+}
+
 collected_result_complete() {
   local workload="$1"
   local result_dir="${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}/${workload}"
@@ -738,7 +776,11 @@ if [[ "${skip_elves}" -eq 0 ]]; then
   log "building ELFs from examples"
   bash "${SCRIPT_DIR}/build-chipyard-elves.sh" \
     "${build_elves_args[@]}"
-  printf '[stage2][PASS] ELF generation root=%s\n' "${REPO_ROOT}/examples"
+  elf_count="$(count_stage2_files "${REPO_ROOT}/examples" 'model-*core.elf')"
+  [[ "${elf_count}" -gt 0 ]] || \
+    die "ELF generation produced no model-<N>core.elf files; Stage 1 build materials are missing or incomplete"
+  printf '[stage2][PASS] ELF generation root=%s count=%s\n' \
+    "${REPO_ROOT}/examples" "${elf_count}"
 fi
 
 if [[ "${skip_package}" -eq 0 ]]; then
@@ -754,7 +796,9 @@ if [[ "${skip_package}" -eq 0 ]]; then
     done
   fi
   bash "${SCRIPT_DIR}/package-firemarshal-workload.sh" "${package_args[@]}"
-  printf '[stage2][PASS] FireMarshal workload directory=%s\n' "${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
+  packaged_workload_count="$(validate_packaged_workloads)"
+  printf '[stage2][PASS] FireMarshal workload directory=%s count=%s\n' \
+    "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" "${packaged_workload_count}"
 fi
 
 # A non-selective run can only discover its workload set after packaging.

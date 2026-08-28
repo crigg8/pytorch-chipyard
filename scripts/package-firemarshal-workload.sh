@@ -961,12 +961,6 @@ if [[ "${check_chipyard}" -eq 1 ]]; then
     die "FireSim deploy directory not found: ${FIRESIM_DEPLOY_DIR}; check CHIPYARD_DIR or FIRESIM_DEPLOY_DIR"
 fi
 
-mkdir -p "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" "${FIRESIM_WORKLOAD_DIR}"
-if [[ "${clean_workloads}" -eq 1 ]]; then
-  log "cleaning generated FireMarshal workload JSONs/overlays"
-  clean_generated_workloads
-fi
-
 shopt -s nullglob
 
 elf_paths=()
@@ -981,16 +975,20 @@ else
 fi
 
 if [[ "${#elf_paths[@]}" -eq 0 ]]; then
-  warn "no model-*core.elf files found under ${artifact_root}"
-  exit 0
+  die "no model-*core.elf build outputs found under ${artifact_root}; Stage 2 cannot package workloads until Stage 1 artifacts are present and ELF generation succeeds"
 fi
-
-declare -A PACKAGED_WORKLOADS=()
-packaged_count=0
 
 log "artifact root: ${artifact_root}"
 log "FireMarshal workload dir: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
 log "FireSim workload dir: ${FIRESIM_WORKLOAD_DIR}"
+
+# Resolve and validate the complete package plan before removing any existing
+# workload files. A missing or unusable Stage 1/ELF input must leave the last
+# known-good package set intact and fail Stage 2 visibly.
+package_artifact_dirs=()
+package_elf_paths=()
+package_workload_names=()
+declare -A PLANNED_WORKLOADS=()
 
 for elf_path in "${elf_paths[@]}"; do
   artifact_dir="$(dirname "${elf_path}")"
@@ -1008,8 +1006,54 @@ for elf_path in "${elf_paths[@]}"; do
     continue
   fi
   workload_name="$(derive_packaged_workload_name "${artifact_dir}" "${core}")"
-  write_workload "${artifact_dir}" "${elf_path}" "${rootfs_size}" "${workload_name}"
+  validate_name "workload name" "${workload_name}"
+  require_file "${elf_path}"
+  if ! select_input_bin "${artifact_dir}" >/dev/null; then
+    die "could not find input.bin or a unique *input*.bin under ${artifact_dir}; Stage 2 cannot package ${workload_name}"
+  fi
+  require_file "${artifact_dir}/weights.bin"
+  if [[ -n "${PLANNED_WORKLOADS[${workload_name}]:-}" ]]; then
+    die "duplicate workload name '${workload_name}' from ${artifact_dir} and ${PLANNED_WORKLOADS[${workload_name}]}"
+  fi
+  PLANNED_WORKLOADS["${workload_name}"]="${artifact_dir}"
+  if is_boom_flex_kernel_workload "${workload_name}"; then
+    require_flex_kernel_only_elf "${elf_path}"
+    require_no_openmp_elf "${elf_path}"
+  fi
+  package_artifact_dirs+=("${artifact_dir}")
+  package_elf_paths+=("${elf_path}")
+  package_workload_names+=("${workload_name}")
+done
+
+if [[ "${#package_elf_paths[@]}" -eq 0 ]]; then
+  die "found ${#elf_paths[@]} ELF file(s), but none match the selected core/build plan; existing packaged workloads were not changed"
+fi
+
+log "validated package inputs for ${#package_elf_paths[@]} workload(s)"
+mkdir -p "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" "${FIRESIM_WORKLOAD_DIR}"
+if [[ "${clean_workloads}" -eq 1 ]]; then
+  log "cleaning generated FireMarshal workload JSONs/overlays"
+  clean_generated_workloads
+fi
+
+declare -A PACKAGED_WORKLOADS=()
+packaged_count=0
+for ((package_index = 0; package_index < ${#package_elf_paths[@]}; package_index++)); do
+  write_workload \
+    "${package_artifact_dirs[package_index]}" \
+    "${package_elf_paths[package_index]}" \
+    "${rootfs_size}" \
+    "${package_workload_names[package_index]}"
   packaged_count=$((packaged_count + 1))
+done
+
+[[ "${packaged_count}" -eq "${#package_elf_paths[@]}" ]] || \
+  die "internal packaging count mismatch: planned ${#package_elf_paths[@]}, generated ${packaged_count}"
+for workload_name in "${package_workload_names[@]}"; do
+  require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload_name}.json"
+  [[ -d "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload_name}" ]] || \
+    die "generated workload overlay not found: ${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload_name}"
+  require_file "${FIRESIM_WORKLOAD_DIR}/${workload_name}.json"
 done
 
 log "done: packaged ${packaged_count} workload(s)"
