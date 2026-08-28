@@ -49,6 +49,9 @@ Environment:
   PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR
                                              Collected result directory.
   PYTORCH_CHIPYARD_LOG_DIR                  Current stage2 log directory.
+  PYTORCH_CHIPYARD_FIRESIM_PYTHON           Optional FireSim/HWDB Python
+                                             override. Default:
+                                             $CHIPYARD_DIR/.conda-env/bin/python3.
   PYTORCH_CHIPYARD_FIRESIM_RUN_FARM_HOST    Default: localhost
   PYTORCH_CHIPYARD_FIRESIM_RUN_FARM_SPEC    Default: one_fpgas_spec
   PYTORCH_CHIPYARD_CLEAN_FIRESIM_RUNS_DIR=0 Skip clearing FIRESIM_RUNS_DIR.
@@ -615,19 +618,25 @@ validate_required_hw_config() {
 
 require_hw_config() {
   local hw_config="$1"
-  local python_bin="${PYTORCH_CHIPYARD_FIRESIM_PYTHON:-python3}"
   local validator="${SCRIPT_DIR}/validate-firesim-hwdb.py"
 
   require_file "${FIRESIM_HWDB_PATH}"
   require_file "${FIRESIM_BUILD_RECIPES_PATH}"
   require_file "${validator}"
 
-  command -v "${python_bin}" >/dev/null 2>&1 || \
-    die "Python interpreter not found: ${python_bin}"
-  "${python_bin}" "${validator}" \
+  "${FIRESIM_PYTHON}" "${validator}" \
     --hwdb "${FIRESIM_HWDB_PATH}" \
     --config "${hw_config}" || \
     die "hardware artifact preflight failed for '${hw_config}'"
+}
+
+resolve_firesim_python() {
+  local chipyard_python="${CHIPYARD_DIR}/.conda-env/bin/python3"
+  local python_bin="${PYTORCH_CHIPYARD_FIRESIM_PYTHON:-${chipyard_python}}"
+
+  [[ -x "${python_bin}" ]] || \
+    die "FireSim Python interpreter is not executable: ${python_bin}; expected the hk_chipyard environment at ${chipyard_python}"
+  printf '%s\n' "${python_bin}"
 }
 
 generate_runtime_config() {
@@ -1185,6 +1194,9 @@ require_dir "${FIRESIM_DIR}"
 if [[ "${PREFLIGHT_ONLY}" != "1" || "${#SELECTED_WORKLOADS[@]}" -eq 0 ]]; then
   require_dir "${FIRESIM_WORKLOAD_DIR}"
 fi
+
+FIRESIM_PYTHON="$(resolve_firesim_python)"
+log "FireSim Python: ${FIRESIM_PYTHON} ($("${FIRESIM_PYTHON}" --version 2>&1))"
 
 WORKLOADS=()
 load_workloads
