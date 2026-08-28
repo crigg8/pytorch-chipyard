@@ -32,7 +32,15 @@ LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examp
 LOG_GLOB = "*gemmini-max-autotune*4core-autotune.log"
 OUT_STEM = "autotune_gemmini_max"
 
-BASELINE_BLOCKING = (64, 64, 32)
+SIMPLE_STAGE2 = os.environ.get(
+    "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+BASELINE_BLOCKING = (64, 64, 512) if SIMPLE_STAGE2 else (64, 64, 32)
 BLACK = "#111111"
 BASELINE_RED = "#D43F35"
 DEFAULT_RED = "#D43F35"
@@ -77,6 +85,14 @@ def _load_log_candidates(path: Path) -> pd.DataFrame:
         raise RuntimeError(f"No autotune candidates parsed from {path}")
 
     df = pd.DataFrame.from_records(records)
+    if SIMPLE_STAGE2:
+        df = df[
+            (df["bm"] == BASELINE_BLOCKING[0])
+            & (df["bn"] == BASELINE_BLOCKING[1])
+            & (df["bk"] == BASELINE_BLOCKING[2])
+        ].copy()
+        if df.empty:
+            raise RuntimeError(f"Blocking {BASELINE_BLOCKING} not found in {path}")
     baseline_df = df[
         (df["bm"] == BASELINE_BLOCKING[0])
         & (df["bn"] == BASELINE_BLOCKING[1])

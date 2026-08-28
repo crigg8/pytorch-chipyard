@@ -406,25 +406,128 @@ override_hw_config_for() {
 required_hw_config_for() {
   local workload="$1"
 
+  #jseo: Pin RVV workloads to their validated physical core configurations.
   case "${workload}" in
     opt-boom-gemmini-flash-*tok-1core | opt-boom-gemmini-window-*tok-1core)
       printf '%s\n' "alveo_u250_firesim_fp8x8_gemmini_boom_2core_no_nic"
       ;;
-    resnet50-rvv-2core)
-      # The packaged two-thread runner pins its workers to harts 0-1. Use the
-      # stable physical four-hart target while leaving every other RVV mapping
-      # unchanged.
+    alexnet-rvv-2core | squeezenet-rvv-2core)
+      # These two-thread workloads completed on the physical two-hart target.
+      printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_2core_no_nic"
+      ;;
+    mobilenetv2-rvv-2core | resnet50-rvv-2core)
+      # Keep two model workers and two housekeeping harts. MobileNetV2 uses
+      # workers 2-3; ResNet50 uses the separately validated workers 0-1.
       printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic_30mhz"
       ;;
-    mobilenetv2-rvv-4core)
-      # Run this placement experiment on the physical eight-hart Saturn
-      # target. The packaged runner selects the non-contiguous worker harts.
+    squeezenet-rvv-4core)
+      # Keep the four SqueezeNet workers on a physical four-hart target. The
+      # eight-hart target has shown boot-time userspace faults before the model
+      # starts, so use the validated 30 MHz four-hart bitstream here.
+      printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_4core_no_nic_30mhz"
+      ;;
+    alexnet-rvv-4core | mobilenetv2-rvv-4core | resnet50-rvv-4core)
+      # The HZ=100/nohz_full recovery profile needs four model workers and four
+      # housekeeping harts on the physical eight-hart Saturn target.
       printf '%s\n' "alveo_u250_firesim_minv128d64_rocket_8core_no_nic_30mhz"
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+#jseo: Encode and validate the scheduling patterns from successful RVV runs.
+rvv_success_profile_for() {
+  local workload="$1"
+
+  # fields: OMP_PLACES | GOMP_CPU_AFFINITY | WAIT_POLICY | SPINCOUNT |
+  #         requires_hz100 | taskset CPU list
+  case "${workload}" in
+    alexnet-rvv-2core)
+      printf '%s\n' '{0},{1}|0 1|ACTIVE|INFINITE|0|'
+      ;;
+    alexnet-rvv-4core)
+      printf '%s\n' '{4},{5},{6},{7}|4 5 6 7|ACTIVE|INFINITE|1|4-7'
+      ;;
+    mobilenetv2-rvv-2core)
+      printf '%s\n' '{2},{3}|2 3|ACTIVE|INFINITE|0|'
+      ;;
+    mobilenetv2-rvv-4core)
+      printf '%s\n' '{0},{1},{6},{7}|0 1 6 7|ACTIVE|INFINITE|1|0-1,6-7'
+      ;;
+    resnet50-rvv-2core)
+      printf '%s\n' '{0},{1}|0 1|ACTIVE|INFINITE|1|0-1'
+      ;;
+    resnet50-rvv-4core)
+      printf '%s\n' '{4},{5},{6},{7}|4 5 6 7|ACTIVE|INFINITE|1|4-7'
+      ;;
+    squeezenet-rvv-2core)
+      printf '%s\n' '{0},{1}|0 1|ACTIVE|INFINITE|0|'
+      ;;
+    squeezenet-rvv-4core)
+      printf '%s\n' '{0},{1},{2},{3}|0 1 2 3|PASSIVE|0|0|'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_rvv_success_package() {
+  local workload="$1"
+  local profile expected_places expected_affinity expected_wait expected_spin
+  local requires_hz100 expected_worker runner workload_json linux_fragment
+  local linux_config image bootbinary
+
+  contains_tag "${workload}" "rvv" || return 0
+
+  profile="$(rvv_success_profile_for "${workload}")" || \
+    die "${workload} has no validated RVV success profile"
+  IFS='|' read -r expected_places expected_affinity expected_wait expected_spin \
+    requires_hz100 expected_worker <<<"${profile}"
+
+  runner="$(find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/overlay-${workload}" \
+    -type f -name "run_${workload}.sh" -print -quit 2>/dev/null || true)"
+  workload_json="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
+  linux_fragment="${PYTORCH_CHIPYARD_WORKLOAD_DIR}/.pytorch-chipyard-${workload}-linux-config"
+  linux_config="${FIREMARSHAL_IMAGE_DIR}/${workload}/linux_config"
+  image="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}.img"
+  bootbinary="${FIREMARSHAL_IMAGE_DIR}/${workload}/${workload}-bin"
+
+  [[ -n "${runner}" ]] || \
+    die "${workload} packaged runner is missing; rerun package-firemarshal-workload.sh"
+  require_file "${workload_json}"
+  require_file "${image}"
+  require_file "${bootbinary}"
+
+  grep -Fqx "export OMP_PLACES=\"${expected_places}\"" "${runner}" || \
+    die "${workload} runner does not use validated OMP_PLACES=${expected_places}; repackage and rebuild it"
+  grep -Fqx "export GOMP_CPU_AFFINITY=\"${expected_affinity}\"" "${runner}" || \
+    die "${workload} runner does not use validated GOMP_CPU_AFFINITY=${expected_affinity}; repackage and rebuild it"
+  grep -Fqx "export OMP_WAIT_POLICY=${expected_wait}" "${runner}" || \
+    die "${workload} runner does not use validated OMP_WAIT_POLICY=${expected_wait}; repackage and rebuild it"
+  grep -Fqx "export GOMP_SPINCOUNT=${expected_spin}" "${runner}" || \
+    die "${workload} runner does not use validated GOMP_SPINCOUNT=${expected_spin}; repackage and rebuild it"
+
+  if [[ "${requires_hz100}" == "1" ]]; then
+    require_file "${linux_fragment}"
+    require_file "${linux_config}"
+    grep -Fq "\"linux\": {\"config\": \"$(basename "${linux_fragment}")\"}" "${workload_json}" || \
+      die "${workload} FireMarshal JSON does not select its stable Linux fragment; repackage and rebuild it"
+    grep -Fqx 'CONFIG_HZ=100' "${linux_config}" || \
+      die "${workload} boot binary was not built with CONFIG_HZ=100; rebuild its FireMarshal image"
+    grep -Fqx 'CONFIG_NO_HZ_FULL=y' "${linux_config}" || \
+      die "${workload} boot binary was not built with CONFIG_NO_HZ_FULL=y; rebuild its FireMarshal image"
+    grep -Fq "nohz_full=${expected_worker}" "${linux_config}" || \
+      die "${workload} kernel command line does not isolate workers ${expected_worker}; rebuild its FireMarshal image"
+    grep -Fq '[runner] rvv_stable_profile=hz100-nohz-full-fifo-v1' "${runner}" || \
+      die "${workload} runner is missing the validated RVV runtime tuning; repackage and rebuild it"
+    grep -Fq "taskset -c ${expected_worker} chrt -f 1 ./model-" "${runner}" || \
+      die "${workload} runner is missing taskset/SCHED_FIFO for workers ${expected_worker}; repackage and rebuild it"
+    grep -Fq 'sysctl -w kernel.sched_rt_runtime_us=-1' "${runner}" || \
+      die "${workload} runner does not disable RT throttling; repackage and rebuild it"
+  fi
 }
 
 infer_hw_config() {
@@ -530,7 +633,8 @@ generate_runtime_config() {
 # Auto-generated by scripts/run-firesim-workloads.sh
 
 run_farm:
-  base_recipe: run-farm-recipes/externally_provisioned.yaml
+  #jseo: Recipes remain in the shared install even when deploy state is private.
+  base_recipe: $(yaml_quote "${FIRESIM_DIR}/deploy/run-farm-recipes/externally_provisioned.yaml")
   recipe_arg_overrides:
     default_platform: XilinxAlveoU250InstanceDeployManager
     default_simulation_dir: $(yaml_quote "${FIRESIM_RUNS_DIR}")
@@ -1069,6 +1173,10 @@ require_dir "${FIRESIM_WORKLOAD_DIR}"
 WORKLOADS=()
 load_workloads
 apply_resume_filters
+#jseo: Refuse stale RVV packages that do not contain the validated profile.
+for workload in "${WORKLOADS[@]}"; do
+  validate_rvv_success_package "${workload}"
+done
 clean_collected_results
 
 require_file "${FIRESIM_DIR}/sourceme-manager.sh"

@@ -91,11 +91,13 @@ done
 
 export TMPDIR="${TMPDIR:-$PYTORCH_CHIPYARD_FIREMARSHAL_TMP_DIR}"
 
+#jseo: A private MARSHAL_IMAGE_DIR must exist before FireMarshal loads config.
 mkdir -p \
   "${MARSHAL_MOUNT_DIR}" \
   "${LIBGUESTFS_CACHEDIR}" \
   "${LIBGUESTFS_TMPDIR}" \
   "${TMPDIR}" \
+  "${FIREMARSHAL_IMAGE_DIR}" \
   "${FIRESIM_WORKLOAD_DIR}"
 
 workload_jsons=()

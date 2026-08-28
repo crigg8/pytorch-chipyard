@@ -439,13 +439,16 @@ write_workload() {
   local input_path input_base weights_path elf_sha256 input_sha256 weights_sha256
   local workload_dir deploy_workload_dir overlay_dir guest_dir runner_path hook_path
   local workload_json deploy_json workload_config_path linux_config_path linux_json_entry
+  local firesim_workload_input_dir common_bootbinary common_rootfs
   local places cpu_affinity model_command
   local omp_first_cpu omp_places_override omp_cpu_affinity_override
   local omp_wait_policy omp_display_affinity gomp_spincount
   local workload_env_suffix omp_first_cpu_var omp_places_var gomp_cpu_affinity_var
   local omp_wait_policy_var gomp_spincount_var omp_places_env gomp_cpu_affinity_env
   local expect_output_bin runner_check_files output_entries kernel_only=0
-  local runner_runtime_env runner_runtime_log
+  local runner_runtime_env runner_runtime_log runner_runtime_tuning=""
+  local rvv_hz100_profile=0 rvv_worker_cpus="" rvv_housekeeping_cpus=""
+  local rvv_housekeeping_mask="" rvv_expected_affinity=""
 
   elf_base="$(basename "${elf_path}")"
   core="$(infer_core_from_elf "${elf_base}")"
@@ -486,6 +489,12 @@ write_workload() {
   linux_json_entry=""
 
   mkdir -p "${guest_dir}" "${deploy_workload_dir}" "$(dirname "${runner_path}")"
+  #jseo: Make FireSim JSON paths valid for private image and deploy roots.
+  firesim_workload_input_dir="${deploy_workload_dir}/${workload_name}"
+  common_bootbinary="$(realpath -m --relative-to="${firesim_workload_input_dir}" \
+    "${FIREMARSHAL_IMAGE_DIR}/${workload_name}/${workload_name}-bin")"
+  common_rootfs="$(realpath -m --relative-to="${firesim_workload_input_dir}" \
+    "${FIREMARSHAL_IMAGE_DIR}/${workload_name}/${workload_name}.img")"
 
   if is_boom_flex_kernel_workload "${workload_name}"; then
     kernel_only=1
@@ -538,6 +547,17 @@ EOF
         # target. It is validated on the four-hart 30 MHz target with the
         # workers isolated from harts 0-1.
         omp_first_cpu=2
+        ;;
+      squeezenet-rvv-4core)
+        #jseo: Preserve the validated four-core SqueezeNet RVV placement.
+        # SqueezeNet uses the physical four-hart 30 MHz target, so place all
+        # four workers on the available harts instead of the eight-hart
+        # target's default harts 4-7. Its validated run used passive OpenMP
+        # waits rather than permanently spinning on every physical hart.
+        omp_first_cpu=0
+        omp_display_affinity=TRUE
+        omp_wait_policy=PASSIVE
+        gomp_spincount=0
         ;;
       mobilenetv2-rvv-4core)
         # Split the four RVV workers across the edge pairs of the physical
@@ -604,6 +624,77 @@ EOF
   fi
   model_command="$(shell_quote "./${elf_base}") $(shell_quote "${input_base}") weights.bin output.bin"
 
+  #jseo: Preserve the exact low-jitter profile used by successful RVV runs.
+  # Four RVV workloads required a low-jitter Linux configuration to complete
+  # reliably. Keep their exact successful worker/housekeeping partitions here
+  # so packaging produces the right kernel, rootfs runner, and boot binary
+  # without a manual jq/sed step. Other RVV workloads retain their separately
+  # validated hardware and OpenMP profiles.
+  case "${workload_name}" in
+    alexnet-rvv-4core | resnet50-rvv-4core)
+      rvv_hz100_profile=1
+      rvv_worker_cpus="4-7"
+      rvv_housekeeping_cpus="0-3"
+      rvv_housekeeping_mask="0f"
+      rvv_expected_affinity="4 5 6 7"
+      ;;
+    mobilenetv2-rvv-4core)
+      rvv_hz100_profile=1
+      rvv_worker_cpus="0-1,6-7"
+      rvv_housekeeping_cpus="2-5"
+      rvv_housekeeping_mask="3c"
+      rvv_expected_affinity="0 1 6 7"
+      ;;
+    resnet50-rvv-2core)
+      rvv_hz100_profile=1
+      rvv_worker_cpus="0-1"
+      rvv_housekeeping_cpus="2-3"
+      rvv_housekeeping_mask="0c"
+      rvv_expected_affinity="0 1"
+      ;;
+  esac
+
+  if [[ "${rvv_hz100_profile}" -eq 1 ]]; then
+    [[ "${cpu_affinity}" == "${rvv_expected_affinity}" ]] || \
+      die "${workload_name} requires GOMP_CPU_AFFINITY='${rvv_expected_affinity}' for its validated HZ=100 profile; got '${cpu_affinity}'"
+
+    cat >"${linux_config_path}" <<EOF
+CONFIG_HZ_100=y
+# CONFIG_HZ_250 is not set
+CONFIG_NO_HZ_FULL=y
+# CONFIG_NO_HZ_IDLE is not set
+CONFIG_RCU_NOCB_CPU=y
+# CONFIG_SOFTLOCKUP_DETECTOR is not set
+CONFIG_CMDLINE_FORCE=y
+CONFIG_CMDLINE="nohz_full=${rvv_worker_cpus} rcu_nocbs=${rvv_worker_cpus} rcu_nocb_poll irqaffinity=${rvv_housekeeping_cpus} isolcpus=domain,managed_irq,${rvv_worker_cpus} workqueue.unbound_cpus=${rvv_housekeeping_cpus} watchdog_thresh=0 skew_tick=1 console=ttyS0 console=ttySIF0,3686400 earlycon"
+EOF
+    printf -v linux_json_entry \
+      '  "linux": {"config": "%s"},\n' "$(basename "${linux_config_path}")"
+
+    model_command="taskset -c ${rvv_worker_cpus} chrt -f 1 ${model_command}"
+    runner_runtime_tuning="$(cat <<EOF
+echo "[runner] rvv_stable_profile=hz100-nohz-full-fifo-v1"
+echo "[runner] cmdline=\$(cat /proc/cmdline)"
+echo "[runner] nohz_full=\$(cat /sys/devices/system/cpu/nohz_full 2>/dev/null || true)"
+sysctl -w kernel.sched_rt_runtime_us=-1 || true
+sysctl -w kernel.watchdog=0 || true
+sysctl -w kernel.timer_migration=1 || true
+sysctl -w vm.stat_interval=120 || true
+sysctl -w vm.dirty_writeback_centisecs=0 || true
+[ -w /sys/devices/virtual/workqueue/cpumask ] && echo ${rvv_housekeeping_mask} > /sys/devices/virtual/workqueue/cpumask || true
+for irq_dir in /proc/irq/[0-9]*; do
+  [ -w "\${irq_dir}/smp_affinity_list" ] || continue
+  echo ${rvv_housekeeping_cpus} >"\${irq_dir}/smp_affinity_list" 2>/dev/null || true
+done
+sync || true
+dd if=$(shell_quote "${input_base}") of=/dev/null bs=1M 2>/dev/null || true
+dd if=weights.bin of=/dev/null bs=4M 2>/dev/null || true
+echo "[runner] scheduling and IRQ tuning complete"
+echo "[runner] launch=${model_command}"
+EOF
+)"
+  fi
+
   if [[ "${kernel_only}" -eq 1 ]]; then
     cat >"${workload_config_path}" <<EOF
 workload=${workload_name}
@@ -646,6 +737,18 @@ GOMP_CPU_AFFINITY=${cpu_affinity}
 GOMP_SPINCOUNT=${gomp_spincount}
 MALLOC_ARENA_MAX=1
 EOF
+    if [[ "${rvv_hz100_profile}" -eq 1 ]]; then
+      #jseo: Record the validated RVV scheduling profile in packaged metadata.
+      cat >>"${workload_config_path}" <<EOF
+rvv_stable_profile=hz100-nohz-full-fifo-v1
+rvv_worker_cpus=${rvv_worker_cpus}
+rvv_housekeeping_cpus=${rvv_housekeeping_cpus}
+linux_hz=100
+linux_nohz_full=true
+scheduler_policy=SCHED_FIFO
+scheduler_priority=1
+EOF
+    fi
   fi
 
   expect_output_bin=1
@@ -719,6 +822,9 @@ rm -f output.bin run.log model.log autotune.log
 
 exec >./run.log 2>&1
 
+#jseo: Apply the validated RVV scheduling setup before launching the model.
+${runner_runtime_tuning}
+
 echo "[runner] start ${workload_name}"
 ${runner_runtime_log}
 echo "[runner] elf_sha256=${elf_sha256}"
@@ -758,14 +864,15 @@ ${output_entries}
 }
 EOF
 
+  #jseo: These relative paths are derived from the selected per-user roots.
   cat >"${deploy_json}" <<EOF
 {
   "benchmark_name": "${workload_name}",
   "common_simulation_outputs": [
     "uartlog"
   ],
-  "common_bootbinary": "../../../../../software/firemarshal/images/firechip/${workload_name}/${workload_name}-bin",
-  "common_rootfs": "../../../../../software/firemarshal/images/firechip/${workload_name}/${workload_name}.img",
+  "common_bootbinary": "${common_bootbinary}",
+  "common_rootfs": "${common_rootfs}",
   "common_outputs": [
 ${output_entries}
   ]

@@ -29,7 +29,19 @@ WIDTH_CM = 4.15
 HEIGHT_CM = 4.15
 FONT_SIZE_PT = 6.4
 
-MODEL_ORDER = ["ResNet", "AlexNet", "MobileNet", "SqueezeNet"]
+SIMPLE_STAGE2 = os.environ.get(
+    "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+MODEL_ORDER = (
+    ["SqueezeNet"]
+    if SIMPLE_STAGE2
+    else ["ResNet", "AlexNet", "MobileNet", "SqueezeNet"]
+)
 MODEL_LABELS = {
     "ResNet": "ResNet50",
     "AlexNet": "AlexNet",

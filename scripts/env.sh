@@ -52,7 +52,9 @@ _pytorch_chipyard_firesim_default="${CHIPYARD_DIR:+${CHIPYARD_DIR}/sims/firesim}
 export CHIPYARD_ENV_PATH="${CHIPYARD_ENV_PATH:-${_pytorch_chipyard_env_default}}"
 export FIREMARSHAL_DIR="${FIREMARSHAL_DIR:-${_pytorch_chipyard_firemarshal_default}}"
 export FIREMARSHAL_CONFIG_PATH="${FIREMARSHAL_CONFIG_PATH:-${FIREMARSHAL_DIR:+${FIREMARSHAL_DIR}/marshal-config.yaml}}"
-export FIREMARSHAL_IMAGE_DIR="${FIREMARSHAL_IMAGE_DIR:-${FIREMARSHAL_DIR:+${FIREMARSHAL_DIR}/images/firechip}}"
+#jseo: Keep FireMarshal's real image output and the consumer path in sync.
+export MARSHAL_IMAGE_DIR="${MARSHAL_IMAGE_DIR:-${FIREMARSHAL_DIR:+${FIREMARSHAL_DIR}/images}}"
+export FIREMARSHAL_IMAGE_DIR="${FIREMARSHAL_IMAGE_DIR:-${MARSHAL_IMAGE_DIR:+${MARSHAL_IMAGE_DIR}/firechip}}"
 export FIRESIM_DIR="${FIRESIM_DIR:-${_pytorch_chipyard_firesim_default}}"
 export FIRESIM_DEPLOY_DIR="${FIRESIM_DEPLOY_DIR:-${FIRESIM_DIR:+${FIRESIM_DIR}/deploy}}"
 export FIRESIM_HWDB_PATH="${FIRESIM_HWDB_PATH:-${FIRESIM_DEPLOY_DIR:+${FIRESIM_DEPLOY_DIR}/config_hwdb.yaml}}"
@@ -77,7 +79,8 @@ export PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_DIR="${PYTORCH_CHIPYARD_RISCV_TOOLCHAIN_
 export PYTORCH_CHIPYARD_RISCV_GXX="${PYTORCH_CHIPYARD_RISCV_GXX:-}"
 
 # FireMarshal reads MARSHAL_* environment variables as config overrides.
-export MARSHAL_FIRESIM_DIR="${MARSHAL_FIRESIM_DIR:-$FIRESIM_DIR}"
+#jseo: Install workload JSONs into the selected per-user deploy tree.
+export MARSHAL_FIRESIM_DIR="${MARSHAL_FIRESIM_DIR:-${FIRESIM_DEPLOY_DIR:+$(dirname -- "${FIRESIM_DEPLOY_DIR}")}}"
 export MARSHAL_MOUNT_DIR="${MARSHAL_MOUNT_DIR:-$WORKSPACE/.firemarshal/disk-mount}"
 
 # Writable paths for FireMarshal's unprivileged guestmount fallback.

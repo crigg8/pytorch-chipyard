@@ -100,6 +100,17 @@ RUNS = [
     ),
 ]
 
+SIMPLE_STAGE2 = os.environ.get(
+    "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+if SIMPLE_STAGE2:
+    RUNS = [spec for spec in RUNS if spec.model == "SqueezeNet"]
+
 ROCKET_SCALING_RUNS = [
     RunSpec(
         "MobileNetV2",
@@ -411,7 +422,11 @@ def add_category_legend(ax: plt.Axes, y: float = LEGEND_Y) -> None:
 
 
 def draw_backend_panel(ax: plt.Axes, runs: list[dict]) -> None:
-    y = np.array([0.0, 0.30, 0.95, 1.25])
+    y = (
+        np.array([0.0, 0.30])
+        if SIMPLE_STAGE2
+        else np.array([0.0, 0.30, 0.95, 1.25])
+    )
     height = 0.18
     lefts = np.zeros(len(runs))
     for category in CATEGORIES:
@@ -433,15 +448,22 @@ def draw_backend_panel(ax: plt.Axes, runs: list[dict]) -> None:
     ax.set_xlim(0.0, max(run["avg_b"] for run in runs) * 1.12)
     ax.set_xticks([0.0, 2.5, 5.0])
     ax.set_yticks(y)
-    ax.set_yticklabels(["R4", "G2", "R4", "G2"])
+    ax.set_yticklabels(
+        ["R4", "G2"] if SIMPLE_STAGE2 else ["R4", "G2", "R4", "G2"]
+    )
     ax.tick_params(axis="y", pad=1.0)
     ax.tick_params(axis="x", pad=1.0)
     ax.set_ylim(y[-1] + 0.18, y[0] - 0.18)
     ax.grid(axis="x", color="#BDBDBD", linestyle="--", linewidth=0.45, alpha=0.9, zorder=0)
     ax.set_axisbelow(True)
 
-    group_centers = [np.mean(y[:2]), np.mean(y[2:])]
-    for center, label in zip(group_centers, ["MobileNetV2", "SqueezeNet"]):
+    if SIMPLE_STAGE2:
+        group_centers = [np.mean(y)]
+        group_labels = ["SqueezeNet"]
+    else:
+        group_centers = [np.mean(y[:2]), np.mean(y[2:])]
+        group_labels = ["MobileNetV2", "SqueezeNet"]
+    for center, label in zip(group_centers, group_labels):
         ax.text(
             -0.18,
             center,
@@ -617,8 +639,29 @@ def draw_figure(backend_runs: list[dict], scaling_runs: list[dict]) -> None:
 
 def main() -> None:
     backend_runs = [load_run(spec) for spec in RUNS]
-    scaling_runs = load_rocket_scaling_runs()
-    draw_figure(backend_runs, scaling_runs)
+    scaling_runs = [] if SIMPLE_STAGE2 else load_rocket_scaling_runs()
+    if SIMPLE_STAGE2:
+        apply_style()
+        FIGURE_DIR.mkdir(exist_ok=True)
+        fig, ax = plt.subplots(
+            figsize=(cm_to_inch(PANEL_WIDTH_CM), cm_to_inch(PANEL_HEIGHT_CM)),
+            dpi=260,
+        )
+        fig.subplots_adjust(
+            left=AXES_LEFT,
+            right=AXES_RIGHT,
+            top=AXES_TOP,
+            bottom=AXES_BOTTOM,
+        )
+        draw_backend_panel(ax, backend_runs)
+        style_axes(ax)
+        add_category_legend(ax)
+        out_path = FIGURE_DIR / "mobilenet_squeezenet_backend_attribution.pdf"
+        fig.savefig(out_path)
+        print(f"Saved: {out_path}")
+        plt.close(fig)
+    else:
+        draw_figure(backend_runs, scaling_runs)
     for run in backend_runs:
         pieces = ", ".join(
             f"{category}={run['totals'][category]:.3f}B"
@@ -626,7 +669,7 @@ def main() -> None:
             if run["totals"][category] > 0.001
         )
         print(f"{run['model']} {run['backend']}: avg={run['avg_b']:.3f}B; {pieces}")
-    for model in ["MobileNetV2", "AlexNet"]:
+    for model in ([] if SIMPLE_STAGE2 else ["MobileNetV2", "AlexNet"]):
         model_runs = [run for run in scaling_runs if run["model"] == model]
         base = model_runs[0]["avg_b"]
         pieces = ", ".join(

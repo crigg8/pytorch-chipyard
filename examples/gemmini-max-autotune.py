@@ -23,6 +23,7 @@ DEFAULT_ARTIFACT_DIR = SCRIPT_DIR.parent / "IR" / TASK_NAME
 VALIDATE_ATOL = 1e-3
 SEED = 0
 EXPECTED_AUTOTUNE_CANDIDATES = 2163
+SIMPLE_STAGE2_AUTOTUNE_CANDIDATES = 81
 
 
 class SingleMatmulModule(torch.nn.Module):
@@ -134,10 +135,16 @@ def validate_autotune_candidates(path: Path) -> None:
     if not isinstance(choices, list):
         raise RuntimeError(f"autotune site in {spec_path} has no choices list")
     candidate_count = len(choices)
-    if candidate_count != EXPECTED_AUTOTUNE_CANDIDATES:
+    expected_candidate_count = (
+        SIMPLE_STAGE2_AUTOTUNE_CANDIDATES
+        if os.environ.get("PYTORCH_CHIPYARD_SIMPLE_STAGE2", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        else EXPECTED_AUTOTUNE_CANDIDATES
+    )
+    if candidate_count != expected_candidate_count:
         raise RuntimeError(
             "Gemmini autotune candidate count mismatch: "
-            f"expected {EXPECTED_AUTOTUNE_CANDIDATES}, got {candidate_count}"
+            f"expected {expected_candidate_count}, got {candidate_count}"
         )
     print(f"[artifact] autotune_candidates={candidate_count}")
 

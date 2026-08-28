@@ -55,6 +55,19 @@ table4_repeats="${TABLE4_REPEATS:-1}"
 only_alias_first=0
 only_alias_first_cnn_off=0
 skip_alias_first_requested=0
+simple_stage2_enabled=0
+case "${PYTORCH_CHIPYARD_SIMPLE_STAGE2:-0}" in
+  1 | true | TRUE | yes | YES | on | ON)
+    simple_stage2_enabled=1
+    export PYTORCH_CHIPYARD_SIMPLE_STAGE2=1
+    ;;
+  0 | false | FALSE | no | NO | off | OFF | "")
+    export PYTORCH_CHIPYARD_SIMPLE_STAGE2=0
+    ;;
+  *)
+    die "PYTORCH_CHIPYARD_SIMPLE_STAGE2 must be 0 or 1"
+    ;;
+esac
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -161,22 +174,43 @@ if [[ "${only_alias_first}" -eq 1 || "${only_alias_first_cnn_off}" -eq 1 ]]; the
   skip_table4=1
 fi
 
+if [[ "${simple_stage2_enabled}" -eq 1 ]]; then
+  [[ "${only_table4}" -eq 0 && "${only_alias_first}" -eq 0 && \
+      "${only_alias_first_cnn_off}" -eq 0 ]] || \
+    die "PYTORCH_CHIPYARD_SIMPLE_STAGE2 cannot be combined with an --only-* option"
+  skip_im2col=1
+  skip_table4=1
+  log "simple Stage 2 artifact mode enabled"
+fi
+
 cd "${REPO_ROOT}"
 mkdir -p examples
 
 if [[ "${skip_cnn}" -eq 0 ]]; then
   log "running default CNN workloads"
-  bash "${SCRIPT_DIR}/run-cnn.sh"
+  if [[ "${simple_stage2_enabled}" -eq 1 ]]; then
+    bash "${SCRIPT_DIR}/run-cnn.sh" --backend=gemmini,rvv,scalar --model=squeezenet
+  else
+    bash "${SCRIPT_DIR}/run-cnn.sh"
+  fi
   printf '[stage1][PASS] CNN compiler artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_alias_first}" -eq 0 ]]; then
   log "running CNN Gemmini 4-core alias-first off ablation"
-  bash "${SCRIPT_DIR}/run-alias-first-cnn.sh" --mode=off
+  if [[ "${simple_stage2_enabled}" -eq 1 ]]; then
+    bash "${SCRIPT_DIR}/run-alias-first-cnn.sh" --mode=off --model=squeezenet
+  else
+    bash "${SCRIPT_DIR}/run-alias-first-cnn.sh" --mode=off
+  fi
 
   if [[ "${only_alias_first_cnn_off}" -eq 0 ]]; then
     log "running LLM SDPA seq=256 Gemmini 4-core alias-first on/off ablation"
-    bash "${SCRIPT_DIR}/run-alias-first-sdpa.sh"
+    if [[ "${simple_stage2_enabled}" -eq 1 ]]; then
+      bash "${SCRIPT_DIR}/run-alias-first-sdpa.sh" --model=opt
+    else
+      bash "${SCRIPT_DIR}/run-alias-first-sdpa.sh"
+    fi
   fi
   printf '[stage1][PASS] Figure 9 alias-first artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
@@ -189,13 +223,22 @@ fi
 
 if [[ "${skip_sdpa}" -eq 0 ]]; then
   log "running SDPA LLM workloads"
-  bash "${SCRIPT_DIR}/run-sdpa.sh"
+  if [[ "${simple_stage2_enabled}" -eq 1 ]]; then
+    bash "${SCRIPT_DIR}/run-sdpa.sh" --model=opt
+  else
+    bash "${SCRIPT_DIR}/run-sdpa.sh"
+  fi
   printf '[stage1][PASS] Figure 6(b) SDPA artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 
 if [[ "${skip_flex_attn}" -eq 0 ]]; then
   log "running flash/window attention LLM workloads"
-  bash "${SCRIPT_DIR}/run-flex-attn.sh"
+  if [[ "${simple_stage2_enabled}" -eq 1 ]]; then
+    bash "${SCRIPT_DIR}/run-flex-attn.sh" \
+      --model=opt --attention=flash,window --host=default --seq-len=256
+  else
+    bash "${SCRIPT_DIR}/run-flex-attn.sh"
+  fi
   printf '[stage1][PASS] Figure 13 FlexAttention artifacts=%s\n' "${REPO_ROOT}/examples"
 fi
 

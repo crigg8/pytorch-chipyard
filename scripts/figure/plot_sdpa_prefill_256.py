@@ -28,7 +28,15 @@ WIDTH_CM = 4.15
 HEIGHT_CM = 4.15
 FONT_SIZE_PT = 6.4
 
-MODEL_ORDER = ["opt", "pythia", "gpt2", "gpt-neo"]
+SIMPLE_STAGE2 = os.environ.get(
+    "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+MODEL_ORDER = ["opt"] if SIMPLE_STAGE2 else ["opt", "pythia", "gpt2", "gpt-neo"]
 MODEL_LABELS = {
     "opt": "OPT-125M",
     "pythia": "Pythia-160M",

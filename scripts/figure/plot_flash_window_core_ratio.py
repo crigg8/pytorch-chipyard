@@ -29,8 +29,16 @@ WIDTH_CM = 3.0
 HEIGHT_CM = 4.15
 FONT_SIZE_PT = 6.4
 OUTPUT_BBOX = Bbox.from_bounds(0.0582, 0.3258, 81.6376 / 72.0, 83.7395 / 72.0)
-TOKENS = [256, 512, 768, 1024]
-TOKEN_LABELS = ["256", "512", "768", "1024"]
+SIMPLE_STAGE2 = os.environ.get(
+    "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+TOKENS = [256] if SIMPLE_STAGE2 else [256, 512, 768, 1024]
+TOKEN_LABELS = [str(token) for token in TOKENS]
 GROUP_STEP = 0.54
 
 

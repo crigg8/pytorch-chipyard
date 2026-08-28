@@ -27,7 +27,15 @@ WIDTH_CM = 3.0
 HEIGHT_CM = 4.15
 FONT_SIZE_PT = 6.4
 
-MODEL_ORDER = ["opt", "pythia"]
+SIMPLE_STAGE2 = os.environ.get(
+    "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+MODEL_ORDER = ["opt"] if SIMPLE_STAGE2 else ["opt", "pythia"]
 MODEL_LABELS = {
     "opt": "OPT-125M",
     "pythia": "Pythia-160M",
@@ -37,8 +45,8 @@ OUTPUTS = {
     "pythia": "flex_prefill_pythia.pdf",
 }
 
-TOKENS = [256, 512, 768, 1024]
-TOKEN_LABELS = ["256", "512", "768", "1024"]
+TOKENS = [256] if SIMPLE_STAGE2 else [256, 512, 768, 1024]
+TOKEN_LABELS = [str(token) for token in TOKENS]
 GROUP_STEP = 0.54
 
 SERIES = [
@@ -174,7 +182,8 @@ def main() -> None:
 
     df = load_cycles()
     draw_model(df, "opt", "Cycle(B)")
-    draw_model(df, "pythia", None)
+    if not SIMPLE_STAGE2:
+        draw_model(df, "pythia", None)
 
 
 if __name__ == "__main__":

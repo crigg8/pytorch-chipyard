@@ -187,6 +187,9 @@ for model in "${models[@]}"; do
       esac
 
       built_cores=()
+      if [[ "${host_arg_default}" -eq 1 && "${attention}" == "sdpa" && "${seq_len}" == "256" ]]; then
+        pc_append_unique built_cores 2
+      fi
       for host in "${hosts[@]}"; do
         if [[ "${host_arg_default}" -eq 1 && "${attention}" == "sdpa" && "${host}" == "boom" ]]; then
           continue

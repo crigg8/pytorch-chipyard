@@ -30,6 +30,7 @@ Environment:
   PYTORCH_CHIPYARD_CONDA_ENV                     Plot conda environment name.
   PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR   Default result directory.
   PYTORCH_CHIPYARD_LOG_DIR                       Default log directory.
+  PYTORCH_CHIPYARD_SIMPLE_STAGE2=1               Generate partial simple figures.
 EOF
 }
 

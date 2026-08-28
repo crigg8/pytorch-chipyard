@@ -42,10 +42,17 @@ Environment:
   PYTORCH_CHIPYARD_CONDA_ENV                     Default: ${PYTORCH_CHIPYARD_CONDA_ENV}
   PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR   Default result directory
   PYTORCH_CHIPYARD_LOG_DIR                       Default log directory
+  PYTORCH_CHIPYARD_SIMPLE_STAGE2=1               Generate the partial simple set
 EOF
 }
 
 only_alias_first=0
+simple_stage2=0
+case "${PYTORCH_CHIPYARD_SIMPLE_STAGE2:-0}" in
+  1 | true | TRUE | yes | YES | on | ON) simple_stage2=1 ;;
+  0 | false | FALSE | no | NO | off | OFF | "") ;;
+  *) die "PYTORCH_CHIPYARD_SIMPLE_STAGE2 must be 0 or 1" ;;
+esac
 
 select_python_cmd() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -127,6 +134,25 @@ if [[ "${only_alias_first}" -eq 1 ]]; then
   plot_scripts=(plot_alias_first_ablation.py)
   expected_outputs=(
     "Figure 9|alias_first_ablation.pdf"
+  )
+elif [[ "${simple_stage2}" -eq 1 ]]; then
+  plot_scripts=(
+    plot_cnn_absolute_cycles.py
+    plot_sdpa_prefill_256.py
+    plot_alias_first_ablation.py
+    plot_mobilenet_squeezenet_attribution.py
+    plot_gemmini_max_autotune.py
+    plot_flex_prefill.py
+    plot_flash_window_core_ratio.py
+  )
+  expected_outputs=(
+    "Figure 6(a), partial|cnn_absolute_cycles.pdf"
+    "Figure 6(b), partial|spda_prefill_256.pdf"
+    "Figure 8(a), partial|mobilenet_squeezenet_backend_attribution.pdf"
+    "Figure 9, partial|alias_first_ablation.pdf"
+    "Figure 11, partial|autotune_gemmini_max.pdf"
+    "Figure 13(a), partial|flex_prefill_opt.pdf"
+    "Figure 13(c), partial|flash_window_core_ratio.pdf"
   )
 else
   plot_scripts=(

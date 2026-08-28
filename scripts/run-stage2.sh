@@ -28,11 +28,12 @@ Run the Stage 2 host workflow in order:
 
 Options:
   --experiment=NAME     Run one resumable paper experiment unit. NAME is one of:
-                          figures-7-8-9-table5
+                          figures-6-7-8-9-table5
                           figure-10
                           figure-11
                           figure-13
                           table-4
+                          simple
                         Completed ordinary workloads are detected under the
                         collected results directory and skipped automatically.
   --riscv-toolchain-dir=PATH
@@ -78,6 +79,8 @@ Environment:
   derives CHIPYARD_ENV_PATH as $CHIPYARD_DIR/env.sh.
   PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS defaults to 0 so existing collected
   results and logs are preserved. Set it to 1 to clean them before FireSim runs.
+  PYTORCH_CHIPYARD_SIMPLE_STAGE2=1 selects the quick partial Figure
+  6/8/9/11/13 experiment. Prefer scripts/simple-stage2.sh to set it.
   TABLE4_TVM_AE_ROOT points to the prepared TVM-Gemmini AE tree. It defaults to
   $HOME/tvm-gemmini-ae on the author review server.
 EOF
@@ -91,6 +94,7 @@ experiment_arg=""
 experiment_name=""
 experiment_selected=0
 experiment_artifact_dirs=()
+experiment_pending_artifact_dirs=()
 experiment_workloads=()
 experiment_pending_workloads=()
 only_alias_first=0
@@ -268,8 +272,8 @@ if [[ -n "${experiment_arg}" ]]; then
   fi
 
   case "${experiment_arg}" in
-    figures-7-8-9-table5 | fig7-8-9-table5 | fig7-9-table5)
-      experiment_name="figures-7-8-9-table5"
+    figures-6-7-8-9-table5 | figures-7-8-9-table5 | fig6-7-8-9-table5 | fig7-8-9-table5 | fig7-9-table5)
+      experiment_name="figures-6-7-8-9-table5"
       ;;
     figure-10 | fig10)
       experiment_name="figure-10"
@@ -283,8 +287,12 @@ if [[ -n "${experiment_arg}" ]]; then
     table-4 | table4)
       experiment_name="table-4"
       ;;
+    simple | simple-stage2)
+      experiment_name="simple"
+      export PYTORCH_CHIPYARD_SIMPLE_STAGE2=1
+      ;;
     *)
-      die "unknown experiment '${experiment_arg}'; expected figures-7-8-9-table5, figure-10, figure-11, figure-13, or table-4"
+      die "unknown experiment '${experiment_arg}'; expected figures-6-7-8-9-table5, figure-10, figure-11, figure-13, table-4, or simple"
       ;;
   esac
 
@@ -296,10 +304,7 @@ if [[ -n "${experiment_arg}" ]]; then
     skip_table4=1
 
     case "${experiment_name}" in
-      figures-7-8-9-table5)
-        # Figures 7 and 8 use every baseline CNN target. Figure 9 reuses the
-        # four-core Gemmini baselines and adds the alias-first ablations.
-        # Table 5 reuses those CNN baselines and adds four-core LLM prefills.
+      figures-6-7-8-9-table5)
         for model in alexnet mobilenetv2 resnet50 squeezenet; do
           for backend in gemmini rvv scalar; do
             experiment_artifact_dirs+=(
@@ -337,15 +342,19 @@ if [[ -n "${experiment_arg}" ]]; then
           experiment_artifact_dirs+=(
             "${REPO_ROOT}/examples/artifact-${model}/gemmini"
           )
-          experiment_workloads+=("${model}-gemmini-4core")
+          for core in 2 4; do
+            experiment_workloads+=("${model}-gemmini-${core}core")
+          done
         done
         for model in opt pythia; do
           experiment_artifact_dirs+=(
             "${REPO_ROOT}/examples/artifact-${model}/gemmini/sdpa/seq256"
           )
-          experiment_workloads+=(
-            "${model}-rocket-gemmini-sdpa-256tok-4core"
-          )
+          for core in 2 4; do
+            experiment_workloads+=(
+              "${model}-rocket-gemmini-sdpa-256tok-${core}core"
+            )
+          done
         done
         ;;
       figure-10)
@@ -388,6 +397,45 @@ if [[ -n "${experiment_arg}" ]]; then
             done
           done
         done
+        ;;
+      simple)
+        experiment_artifact_dirs+=(
+          "${REPO_ROOT}/examples/artifact-squeezenet/scalar"
+          "${REPO_ROOT}/examples/artifact-squeezenet/rvv"
+          "${REPO_ROOT}/examples/artifact-squeezenet/gemmini"
+          "${REPO_ROOT}/examples/artifact-squeezenet/gemmini-alias-first-off"
+          "${REPO_ROOT}/examples/artifact-opt/gemmini/sdpa/seq256"
+          "${REPO_ROOT}/examples/artifact-opt/gemmini/sdpa/seq256/alias-first-on"
+          "${REPO_ROOT}/examples/artifact-opt/gemmini/sdpa/seq256/alias-first-off"
+        )
+        experiment_workloads+=(
+          "squeezenet-scalar-4core"
+          "squeezenet-rvv-2core"
+          "squeezenet-gemmini-2core"
+          "squeezenet-gemmini-4core"
+          "squeezenet-gemmini-alias-first-off-4core"
+          "opt-rocket-gemmini-sdpa-256tok-2core"
+          "opt-rocket-gemmini-sdpa-256tok-4core"
+          "opt-gemmini-sdpa-256tok-alias-first-on-4core"
+          "opt-gemmini-sdpa-256tok-alias-first-off-4core"
+        )
+
+        for attention in flash window; do
+          experiment_artifact_dirs+=(
+            "${REPO_ROOT}/examples/artifact-opt/gemmini/${attention}/seq256"
+          )
+          experiment_workloads+=(
+            "opt-rocket-gemmini-${attention}-256tok-4core"
+            "opt-boom-gemmini-${attention}-256tok-1core"
+          )
+        done
+
+        experiment_artifact_dirs+=(
+          "${REPO_ROOT}/examples/artifact-gemmini-max-autotune-simple/gemmini"
+        )
+        experiment_workloads+=(
+          "gemmini-max-autotune-simple-gemmini-4core"
+        )
         ;;
     esac
     log "selected ${experiment_name}: ${#experiment_workloads[@]} workload(s)"
@@ -491,6 +539,10 @@ set +u
 source "${SCRIPT_DIR}/env.sh"
 set -u
 
+if [[ "${experiment_name}" == "simple" ]]; then
+  export PYTORCH_CHIPYARD_SIMPLE_STAGE2=1
+fi
+
 cd "${REPO_ROOT}"
 
 should_collect_output_bin() {
@@ -521,14 +573,66 @@ collected_result_complete() {
   fi
 }
 
+reusable_completed_workload() {
+  local workload="$1"
+
+  if collected_result_complete "${workload}"; then
+    printf '%s\n' "${workload}"
+    return 0
+  fi
+  if [[ "${workload}" == "gemmini-max-autotune-simple-gemmini-4core" ]] && \
+      collected_result_complete "gemmini-max-autotune-gemmini-4core"; then
+    printf '%s\n' "gemmini-max-autotune-gemmini-4core"
+    return 0
+  fi
+  return 1
+}
+
+artifact_dir_for_workload() {
+  local workload="$1"
+
+  if [[ "${workload}" =~ ^(alexnet|mobilenetv2|resnet50|squeezenet)-(gemmini|rvv|scalar)-[0-9]+core$ ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+  elif [[ "${workload}" =~ ^(alexnet|mobilenetv2|resnet50|squeezenet)-gemmini-(alias-first-off|im2col)-[0-9]+core$ ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-${BASH_REMATCH[1]}/gemmini-${BASH_REMATCH[2]}"
+  elif [[ "${workload}" =~ ^(gpt2|gpt-neo)-gemmini-[0-9]+core$ ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-${BASH_REMATCH[1]}/gemmini"
+  elif [[ "${workload}" =~ ^(gpt2|gpt-neo|opt|pythia)-gemmini-sdpa-256tok-alias-first-(on|off)-4core$ ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-${BASH_REMATCH[1]}/gemmini/sdpa/seq256/alias-first-${BASH_REMATCH[2]}"
+  elif [[ "${workload}" =~ ^(opt|pythia)-(rocket|boom)-gemmini-(sdpa|flash|window)-([0-9]+)tok-[0-9]+core$ ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-${BASH_REMATCH[1]}/gemmini/${BASH_REMATCH[3]}/seq${BASH_REMATCH[4]}"
+  elif [[ "${workload}" == "gemmini-max-autotune-gemmini-4core" ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-gemmini-max-autotune/gemmini"
+  elif [[ "${workload}" == "gemmini-max-autotune-simple-gemmini-4core" ]]; then
+    printf '%s\n' "${REPO_ROOT}/examples/artifact-gemmini-max-autotune-simple/gemmini"
+  else
+    die "no artifact mapping for experiment workload ${workload}"
+  fi
+}
+
+append_pending_artifact_once() {
+  local artifact_dir="$1"
+  local existing
+
+  for existing in "${experiment_pending_artifact_dirs[@]}"; do
+    [[ "${existing}" == "${artifact_dir}" ]] && return 0
+  done
+  experiment_pending_artifact_dirs+=("${artifact_dir}")
+}
+
 if [[ "${experiment_selected}" -eq 1 ]]; then
   completed_workloads=0
   for workload in "${experiment_workloads[@]}"; do
-    if collected_result_complete "${workload}"; then
+    if reused_workload="$(reusable_completed_workload "${workload}")"; then
       completed_workloads=$((completed_workloads + 1))
-      log "${experiment_name}: skipping completed workload ${workload}"
+      if [[ "${reused_workload}" == "${workload}" ]]; then
+        log "${experiment_name}: skipping completed workload ${workload}"
+      else
+        log "${experiment_name}: reusing ${reused_workload} for ${workload}"
+      fi
     else
       experiment_pending_workloads+=("${workload}")
+      append_pending_artifact_once "$(artifact_dir_for_workload "${workload}")"
       workload_args+=("--workload=${workload}")
     fi
   done
@@ -586,7 +690,7 @@ if [[ -n "${riscv_gxx_arg}" ]]; then
   build_elves_args+=(--riscv-gxx="${riscv_gxx_arg}")
 fi
 if [[ "${experiment_selected}" -eq 1 ]]; then
-  for artifact_dir in "${experiment_artifact_dirs[@]}"; do
+  for artifact_dir in "${experiment_pending_artifact_dirs[@]}"; do
     build_elves_args+=(--artifact-dir="${artifact_dir}")
   done
 elif [[ "${alias_first_selected}" -eq 1 ]]; then
@@ -606,7 +710,7 @@ if [[ "${skip_package}" -eq 0 ]]; then
   log "packaging FireMarshal/FireSim workloads from examples"
   package_args=()
   if [[ "${experiment_selected}" -eq 1 ]]; then
-    for artifact_dir in "${experiment_artifact_dirs[@]}"; do
+    for artifact_dir in "${experiment_pending_artifact_dirs[@]}"; do
       package_args+=(--artifact-dir="${artifact_dir}")
     done
   elif [[ "${alias_first_selected}" -eq 1 ]]; then
