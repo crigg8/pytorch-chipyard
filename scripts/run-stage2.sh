@@ -699,6 +699,14 @@ elif [[ "${alias_first_selected}" -eq 1 ]]; then
   done
 fi
 
+# Validate selected bitstream and driver archives before expensive ELF/image work.
+if [[ "${skip_firesim}" -eq 0 && "${#workload_args[@]}" -gt 0 ]]; then
+  log "validating selected FireSim hardware artifacts"
+  bash "${SCRIPT_DIR}/run-firesim-workloads.sh" \
+    --preflight-only \
+    "${workload_args[@]}"
+fi
+
 if [[ "${skip_elves}" -eq 0 ]]; then
   log "building ELFs from examples"
   bash "${SCRIPT_DIR}/build-chipyard-elves.sh" \
@@ -720,6 +728,20 @@ if [[ "${skip_package}" -eq 0 ]]; then
   fi
   bash "${SCRIPT_DIR}/package-firemarshal-workload.sh" "${package_args[@]}"
   printf '[stage2][PASS] FireMarshal workload directory=%s\n' "${PYTORCH_CHIPYARD_WORKLOAD_DIR}"
+fi
+
+# A non-selective run can only discover its workload set after packaging.
+if [[ "${skip_firesim}" -eq 0 && "${#workload_args[@]}" -eq 0 ]]; then
+  firesim_preflight_args=(--preflight-only)
+  if [[ "${resume_firesim}" -eq 1 ]]; then
+    firesim_preflight_args+=(--resume)
+  fi
+  if [[ -n "${resume_from_arg}" ]]; then
+    firesim_preflight_args+=(--resume-from="${resume_from_arg}")
+  fi
+  log "validating discovered FireSim hardware artifacts"
+  bash "${SCRIPT_DIR}/run-firesim-workloads.sh" \
+    "${firesim_preflight_args[@]}"
 fi
 
 if [[ "${skip_images}" -eq 0 ]]; then

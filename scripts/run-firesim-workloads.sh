@@ -31,6 +31,7 @@ Default:
 
 Options:
   --workload=NAME      Run/collect one workload. May be repeated or comma-separated.
+  --preflight-only     Validate selected HWDB artifacts, then exit without a run.
   --resume             Keep collected results/logs and skip workloads that already
                        have collected outputs.
   --resume-from=NAME   Keep collected results/logs and start from NAME in the
@@ -246,11 +247,13 @@ load_workloads() {
   [[ "${#workloads[@]}" -gt 0 ]] || \
     die "no packaged workloads found under ${PYTORCH_CHIPYARD_WORKLOAD_DIR}; run scripts/package-firemarshal-workload.sh first"
 
-  for workload in "${workloads[@]}"; do
-    require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
-    require_file "${FIRESIM_WORKLOAD_DIR}/${workload}.json"
-    require_boom_flex_kernel_package "${workload}"
-  done
+  if [[ "${PREFLIGHT_ONLY}" != "1" ]]; then
+    for workload in "${workloads[@]}"; do
+      require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
+      require_file "${FIRESIM_WORKLOAD_DIR}/${workload}.json"
+      require_boom_flex_kernel_package "${workload}"
+    done
+  fi
 
   WORKLOADS=("${workloads[@]}")
 }
@@ -612,13 +615,19 @@ validate_required_hw_config() {
 
 require_hw_config() {
   local hw_config="$1"
+  local python_bin="${PYTORCH_CHIPYARD_FIRESIM_PYTHON:-python3}"
+  local validator="${SCRIPT_DIR}/validate-firesim-hwdb.py"
 
   require_file "${FIRESIM_HWDB_PATH}"
   require_file "${FIRESIM_BUILD_RECIPES_PATH}"
+  require_file "${validator}"
 
-  if ! grep -q "^${hw_config}:" "${FIRESIM_HWDB_PATH}"; then
-    die "hardware config '${hw_config}' not found in ${FIRESIM_HWDB_PATH}"
-  fi
+  command -v "${python_bin}" >/dev/null 2>&1 || \
+    die "Python interpreter not found: ${python_bin}"
+  "${python_bin}" "${validator}" \
+    --hwdb "${FIRESIM_HWDB_PATH}" \
+    --config "${hw_config}" || \
+    die "hardware artifact preflight failed for '${hw_config}'"
 }
 
 generate_runtime_config() {
@@ -1118,6 +1127,7 @@ SELECTED_WORKLOADS=()
 RESUME_MODE=0
 RESUME_FROM=""
 RVV_PANIC_RETRIES="${PYTORCH_CHIPYARD_RVV_PANIC_RETRIES:-0}"
+PREFLIGHT_ONLY=0
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -1154,6 +1164,10 @@ while [[ "$#" -gt 0 ]]; do
       RVV_PANIC_RETRIES="${1#--rvv-panic-retries=}"
       shift
       ;;
+    --preflight-only)
+      PREFLIGHT_ONLY=1
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -1168,11 +1182,29 @@ done
   die "invalid --rvv-panic-retries=${RVV_PANIC_RETRIES}; expected a non-negative integer or unlimited"
 
 require_dir "${FIRESIM_DIR}"
-require_dir "${FIRESIM_WORKLOAD_DIR}"
+if [[ "${PREFLIGHT_ONLY}" != "1" || "${#SELECTED_WORKLOADS[@]}" -eq 0 ]]; then
+  require_dir "${FIRESIM_WORKLOAD_DIR}"
+fi
 
 WORKLOADS=()
 load_workloads
 apply_resume_filters
+declare -A WORKLOAD_HW_CONFIGS=()
+declare -A VALIDATED_HW_CONFIGS=()
+for workload in "${WORKLOADS[@]}"; do
+  hw_config="$(infer_hw_config "${workload}")"
+  validate_required_hw_config "${workload}" "${hw_config}"
+  WORKLOAD_HW_CONFIGS["${workload}"]="${hw_config}"
+  if [[ -z "${VALIDATED_HW_CONFIGS[${hw_config}]:-}" ]]; then
+    require_hw_config "${hw_config}"
+    VALIDATED_HW_CONFIGS["${hw_config}"]=1
+  fi
+  log "${workload}: selected hardware config ${hw_config}"
+done
+if [[ "${PREFLIGHT_ONLY}" == "1" ]]; then
+  printf 'FIRESIM_HWDB_PREFLIGHT_STATUS=PASS\n'
+  exit 0
+fi
 #jseo: Refuse stale RVV packages that do not contain the validated profile.
 for workload in "${WORKLOADS[@]}"; do
   validate_rvv_success_package "${workload}"
@@ -1185,10 +1217,7 @@ require_file "${fpga_db}"
 log "FPGA DB: ${fpga_db}"
 
 for workload in "${WORKLOADS[@]}"; do
-  hw_config="$(infer_hw_config "${workload}")"
-  validate_required_hw_config "${workload}" "${hw_config}"
-  require_hw_config "${hw_config}"
-  log "${workload}: selected hardware config ${hw_config}"
+  hw_config="${WORKLOAD_HW_CONFIGS[${workload}]}"
   runtime="$(generate_runtime_config "${workload}" "${hw_config}" "${fpga_db}")"
   marker="${PYTORCH_CHIPYARD_FIRESIM_RUNTIME_DIR}/.${workload}.run-start"
   mkdir -p "$(dirname "${marker}")"
