@@ -26,6 +26,9 @@ Run the Stage 2 host workflow in order:
   5. Complete Table 4's sampled-kernel FireSim and Verilator measurements
      when running the complete, non-selective workflow.
 
+By default, collected FireSim workloads with a valid .completed marker and
+required result logs are skipped. Table 4 also resumes passed measurements.
+
 Options:
   --experiment=NAME     Run one resumable paper experiment unit. NAME is one of:
                           figures-6-7-8-9-table5
@@ -57,6 +60,8 @@ Options:
                         outputs, then run only those FireSim workloads.
   --resume-from=NAME    Skip ELF/package/image stages, keep collected results,
                         and restart FireSim at workload NAME.
+  --rerun-completed     Run completed FireSim workloads again instead of
+                        applying the default completion filter.
   --rvv-panic-retries=N|unlimited
                         Retry an RVV workload after a detected guest kernel
                         panic. Default: 0; unlimited must be explicit.
@@ -100,6 +105,7 @@ experiment_pending_workloads=()
 only_alias_first=0
 only_alias_first_cnn_off=0
 resume_firesim=0
+rerun_completed=0
 rebuild_pending_images=0
 resume_from_arg=""
 rvv_panic_retries_arg=""
@@ -199,6 +205,10 @@ while [[ "$#" -gt 0 ]]; do
       skip_images=1
       shift
       ;;
+    --rerun-completed)
+      rerun_completed=1
+      shift
+      ;;
     --rvv-panic-retries)
       [[ "$#" -ge 2 ]] || die "--rvv-panic-retries requires a value"
       rvv_panic_retries_arg="$2"
@@ -264,6 +274,10 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+if [[ "${rerun_completed}" -eq 1 && "${resume_firesim}" -eq 1 ]]; then
+  die "--rerun-completed cannot be combined with --resume or --resume-rebuild-images"
+fi
+
 if [[ -n "${experiment_arg}" ]]; then
   if [[ "${#workload_args[@]}" -gt 0 || "${only_alias_first}" -eq 1 || \
         "${only_alias_first_cnn_off}" -eq 1 || "${only_table4}" -eq 1 || \
@@ -300,7 +314,9 @@ if [[ -n "${experiment_arg}" ]]; then
     only_table4=1
   else
     experiment_selected=1
-    resume_firesim=1
+    if [[ "${rerun_completed}" -eq 0 ]]; then
+      resume_firesim=1
+    fi
     skip_table4=1
 
     case "${experiment_name}" in
@@ -507,6 +523,12 @@ if [[ "${only_table4}" -eq 1 ]]; then
   skip_firesim=1
 fi
 
+# Ordinary and selectively scoped Stage 2 runs are resumable by default.
+# The FireSim runner performs the authoritative per-workload result check.
+if [[ "${skip_firesim}" -eq 0 && "${rerun_completed}" -eq 0 ]]; then
+  resume_firesim=1
+fi
+
 if [[ -n "${chipyard_env_arg}" ]]; then
   export CHIPYARD_ENV_PATH="${chipyard_env_arg}"
 fi
@@ -541,6 +563,10 @@ set -u
 
 if [[ "${experiment_name}" == "simple" ]]; then
   export PYTORCH_CHIPYARD_SIMPLE_STAGE2=1
+fi
+
+if [[ "${skip_firesim}" -eq 0 && "${resume_firesim}" -eq 1 ]]; then
+  log "FireSim auto-resume enabled; completed workloads under ${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR} will be skipped"
 fi
 
 cd "${REPO_ROOT}"
@@ -623,7 +649,8 @@ append_pending_artifact_once() {
 if [[ "${experiment_selected}" -eq 1 ]]; then
   completed_workloads=0
   for workload in "${experiment_workloads[@]}"; do
-    if reused_workload="$(reusable_completed_workload "${workload}")"; then
+    if [[ "${rerun_completed}" -eq 0 ]] && \
+        reused_workload="$(reusable_completed_workload "${workload}")"; then
       completed_workloads=$((completed_workloads + 1))
       if [[ "${reused_workload}" == "${workload}" ]]; then
         log "${experiment_name}: skipping completed workload ${workload}"
@@ -747,7 +774,7 @@ fi
 if [[ "${skip_images}" -eq 0 ]]; then
   log "building and installing FireMarshal images"
   image_args=()
-  if [[ "${rebuild_pending_images}" -eq 1 ]]; then
+  if [[ "${rebuild_pending_images}" -eq 1 || "${resume_firesim}" -eq 1 ]]; then
     image_args+=(--pending-only)
   fi
   if [[ "${experiment_selected}" -eq 1 ]]; then
