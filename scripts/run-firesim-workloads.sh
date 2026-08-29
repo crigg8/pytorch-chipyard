@@ -239,7 +239,6 @@ require_boom_flex_kernel_package() {
 
 load_workloads() {
   local workloads=()
-  local workload
 
   if [[ "${#SELECTED_WORKLOADS[@]}" -gt 0 ]]; then
     mapfile -t workloads < <(unique_workloads "${SELECTED_WORKLOADS[@]}")
@@ -249,14 +248,6 @@ load_workloads() {
 
   [[ "${#workloads[@]}" -gt 0 ]] || \
     die "no packaged workloads found under ${PYTORCH_CHIPYARD_WORKLOAD_DIR}; run scripts/package-firemarshal-workload.sh first"
-
-  if [[ "${PREFLIGHT_ONLY}" != "1" ]]; then
-    for workload in "${workloads[@]}"; do
-      require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
-      require_file "${FIRESIM_WORKLOAD_DIR}/${workload}.json"
-      require_boom_flex_kernel_package "${workload}"
-    done
-  fi
 
   WORKLOADS=("${workloads[@]}")
 }
@@ -300,6 +291,17 @@ apply_resume_filters() {
     fi
     log "resume: ${#WORKLOADS[@]} pending workload(s)"
   fi
+}
+
+validate_pending_workload_packages() {
+  local workload
+
+  [[ "${PREFLIGHT_ONLY}" != "1" ]] || return 0
+  for workload in "${WORKLOADS[@]}"; do
+    require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
+    require_file "${FIRESIM_WORKLOAD_DIR}/${workload}.json"
+    require_boom_flex_kernel_package "${workload}"
+  done
 }
 
 core_for_workload() {
@@ -1201,6 +1203,10 @@ log "FireSim Python: ${FIRESIM_PYTHON} ($("${FIRESIM_PYTHON}" --version 2>&1))"
 WORKLOADS=()
 load_workloads
 apply_resume_filters
+# Resume filtering must happen before package validation. Completed workloads
+# may intentionally have no private FireMarshal image after account isolation,
+# and they do not need one unless they are selected for another run.
+validate_pending_workload_packages
 declare -A WORKLOAD_HW_CONFIGS=()
 declare -A VALIDATED_HW_CONFIGS=()
 for workload in "${WORKLOADS[@]}"; do
