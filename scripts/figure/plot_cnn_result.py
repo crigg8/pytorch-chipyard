@@ -82,12 +82,18 @@ def load_cycles() -> pd.DataFrame:
     return df
 
 
-def apply_compact_style(fig: plt.Figure, ax: plt.Axes, x: np.ndarray, ylabel: str | None) -> None:
+def apply_compact_style(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    x: np.ndarray,
+    model_order: list[str],
+    ylabel: str | None,
+) -> None:
     if ylabel:
         ax.set_ylabel(ylabel, labelpad=0.5)
     ax.set_xticks(x)
     ax.set_xticklabels(
-        [MODEL_LABELS[model] for model in MODEL_ORDER],
+        [MODEL_LABELS[model] for model in model_order],
         rotation=LABEL_ROTATION_DEG,
         ha="right",
         rotation_mode="anchor",
@@ -119,14 +125,48 @@ def boxed_legend(ax: plt.Axes, ncols: int, y: float) -> None:
     style_legend_frame(legend)
 
 
-def draw_rocket(ax: plt.Axes, df: pd.DataFrame, x: np.ndarray) -> None:
-    hardware_df = df[df["device"] == "Rocket"].set_index("model")
-    baseline = hardware_df["4-core"].reindex(MODEL_ORDER)
+def select_normalized_data(
+    df: pd.DataFrame,
+    device: str,
+    configs: list[tuple[str, str, str]],
+    baseline_column: str,
+) -> tuple[list[str], list[tuple[str, str, str]], dict[str, pd.Series]]:
+    hardware_df = df[df["device"] == device].set_index("model")
+    baseline = hardware_df[baseline_column].reindex(MODEL_ORDER)
+    baseline = baseline.where(baseline > 0)
+
+    ratios: dict[str, pd.Series] = {}
+    for column, _label, _color in configs:
+        measurements = hardware_df[column].reindex(MODEL_ORDER)
+        measurements = measurements.where(measurements > 0)
+        ratios[column] = baseline / measurements
+
+    model_order = [
+        model
+        for model in MODEL_ORDER
+        if pd.notna(baseline.loc[model])
+        and any(pd.notna(ratios[column].loc[model]) for column, _label, _color in configs)
+    ]
+    active_configs = [
+        config
+        for config in configs
+        if any(pd.notna(ratios[config[0]].loc[model]) for model in model_order)
+    ]
+    return model_order, active_configs, ratios
+
+
+def draw_rocket(
+    ax: plt.Axes,
+    x: np.ndarray,
+    model_order: list[str],
+    configs: list[tuple[str, str, str]],
+    ratios: dict[str, pd.Series],
+) -> None:
     width = 0.14
 
-    for idx, (column, label, color) in enumerate(ROCKET_CONFIGS):
-        values = baseline / hardware_df[column].reindex(MODEL_ORDER)
-        offset = (idx - (len(ROCKET_CONFIGS) - 1) / 2) * width
+    for idx, (column, label, color) in enumerate(configs):
+        values = ratios[column].reindex(model_order)
+        offset = (idx - (len(configs) - 1) / 2) * width
         ax.bar(
             x + offset,
             values,
@@ -146,20 +186,19 @@ def draw_rocket(ax: plt.Axes, df: pd.DataFrame, x: np.ndarray) -> None:
 
 def draw_backend(
     ax: plt.Axes,
-    df: pd.DataFrame,
     x: np.ndarray,
-    device: str,
+    model_order: list[str],
     configs: list[tuple[str, str, str]],
-    baseline_column: str,
+    ratios: dict[str, pd.Series],
 ) -> None:
-    hardware_df = df[df["device"] == device].set_index("model")
-    baseline = hardware_df[baseline_column].reindex(MODEL_ORDER)
     width = 0.14
     max_speedup = 1.0
 
     for idx, (column, label, color) in enumerate(configs):
-        values = baseline / hardware_df[column].reindex(MODEL_ORDER)
-        max_speedup = max(max_speedup, float(np.nanmax(values.to_numpy())))
+        values = ratios[column].reindex(model_order)
+        finite_values = values[np.isfinite(values)]
+        if not finite_values.empty:
+            max_speedup = max(max_speedup, float(finite_values.max()))
         offset = (idx - (len(configs) - 1) / 2) * width
         ax.bar(
             x + offset,
@@ -176,6 +215,41 @@ def draw_backend(
     ax.set_yticks([0.0, 1.0, 2.0])
     ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
     boxed_legend(ax, ncols=2, y=1.28)
+
+
+def draw_panel(
+    df: pd.DataFrame,
+    device: str,
+    configs: list[tuple[str, str, str]],
+    baseline_column: str,
+    output_name: str,
+    width_cm: float,
+    adjust: dict[str, float],
+    ylabel: str | None,
+) -> bool:
+    model_order, active_configs, ratios = select_normalized_data(
+        df, device, configs, baseline_column
+    )
+    out_path = FIGURE_DIR / output_name
+    if not model_order or not active_configs:
+        print(f"[plot][SKIP] {out_path}: no measurements with {baseline_column} baseline")
+        return False
+
+    x = np.arange(len(model_order)) * GROUP_STEP
+    fig, ax = plt.subplots(
+        figsize=(cm_to_inch(width_cm), cm_to_inch(HEIGHT_CM)),
+        dpi=220,
+    )
+    fig.subplots_adjust(**adjust)
+    if device == "Rocket":
+        draw_rocket(ax, x, model_order, active_configs, ratios)
+    else:
+        draw_backend(ax, x, model_order, active_configs, ratios)
+    apply_compact_style(fig, ax, x, model_order, ylabel)
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
+    print(f"Saved: {out_path}")
+    plt.close(fig)
+    return True
 
 
 def main() -> None:
@@ -197,44 +271,19 @@ def main() -> None:
     )
 
     df = load_cycles()
-    x = np.arange(len(MODEL_ORDER)) * GROUP_STEP
     FIGURE_DIR.mkdir(exist_ok=True)
-
-    fig, ax = plt.subplots(
-        figsize=(cm_to_inch(ROCKET_WIDTH_CM), cm_to_inch(HEIGHT_CM)),
-        dpi=220,
+    draw_panel(
+        df, "Rocket", ROCKET_CONFIGS, "4-core", "cnn_result_rocket.pdf",
+        ROCKET_WIDTH_CM, ROCKET_ADJUST, "Norm. Perf."
     )
-    fig.subplots_adjust(**ROCKET_ADJUST)
-    draw_rocket(ax, df, x)
-    apply_compact_style(fig, ax, x, "Norm. Perf.")
-    out_path = FIGURE_DIR / "cnn_result_rocket.pdf"
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
-    print(f"Saved: {out_path}")
-    plt.close(fig)
-
-    fig, ax = plt.subplots(
-        figsize=(cm_to_inch(BACKEND_WIDTH_CM), cm_to_inch(HEIGHT_CM)),
-        dpi=220,
+    draw_panel(
+        df, "Saturn", SATURN_CONFIGS, "2 Saturn", "cnn_result_saturn.pdf",
+        BACKEND_WIDTH_CM, BACKEND_ADJUST, None
     )
-    fig.subplots_adjust(**BACKEND_ADJUST)
-    draw_backend(ax, df, x, "Saturn", SATURN_CONFIGS, "2 Saturn")
-    apply_compact_style(fig, ax, x, None)
-    out_path = FIGURE_DIR / "cnn_result_saturn.pdf"
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
-    print(f"Saved: {out_path}")
-    plt.close(fig)
-
-    fig, ax = plt.subplots(
-        figsize=(cm_to_inch(BACKEND_WIDTH_CM), cm_to_inch(HEIGHT_CM)),
-        dpi=220,
+    draw_panel(
+        df, "Gemmini", GEMMINI_CONFIGS, "Dual Gemmini", "cnn_result_gemmini.pdf",
+        BACKEND_WIDTH_CM, BACKEND_ADJUST, None
     )
-    fig.subplots_adjust(**BACKEND_ADJUST)
-    draw_backend(ax, df, x, "Gemmini", GEMMINI_CONFIGS, "Dual Gemmini")
-    apply_compact_style(fig, ax, x, None)
-    out_path = FIGURE_DIR / "cnn_result_gemmini.pdf"
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.01)
-    print(f"Saved: {out_path}")
-    plt.close(fig)
 
 
 if __name__ == "__main__":

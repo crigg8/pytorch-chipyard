@@ -148,7 +148,11 @@ def main() -> None:
         }
     )
 
-    for model, rows in load_data().items():
+    data = load_data()
+    if not data:
+        print("[plot][SKIP] im2col site attribution: no direct/im2col pairs with a baseline")
+        return
+    for model, rows in data.items():
         plot_model(model, rows)
 
 

@@ -79,14 +79,37 @@ def main() -> None:
     df["cycles_b"] = pd.to_numeric(df["total_kernel_cycles_avg"], errors="coerce") / 1e9
 
     selected = df[df["variant"] == "fp32"].copy()
-    values = {
-        cores: selected[selected["cores"] == cores]
-        .set_index("model")["cycles_b"]
-        .reindex(MODEL_ORDER)
+    raw_values = {
+        cores: selected[selected["cores"] == cores].set_index("model")["cycles_b"]
         for cores, _label, _color in SERIES
     }
+    model_order = [
+        model
+        for model in MODEL_ORDER
+        if any(
+            model in raw_values[cores].index
+            and pd.notna(raw_values[cores].loc[model])
+            for cores, _label, _color in SERIES
+        )
+    ]
+    active_series = [
+        series
+        for series in SERIES
+        if any(
+            model in raw_values[series[0]].index
+            and pd.notna(raw_values[series[0]].loc[model])
+            for model in model_order
+        )
+    ]
+    if not model_order or not active_series:
+        print(f"[plot][SKIP] {OUT_PATH}: no SDPA cycle measurements")
+        return
+    values = {
+        cores: raw_values[cores].reindex(model_order)
+        for cores, _label, _color in active_series
+    }
 
-    x = np.arange(len(MODEL_ORDER)) * GROUP_STEP
+    x = np.arange(len(model_order)) * GROUP_STEP
     width = 0.14
 
     fig, ax = plt.subplots(
@@ -95,8 +118,8 @@ def main() -> None:
     )
     fig.subplots_adjust(left=0.23, right=0.99, top=0.66, bottom=0.30)
 
-    for idx, (cores, label, color) in enumerate(SERIES):
-        offset = (idx - (len(SERIES) - 1) / 2) * width
+    for idx, (cores, label, color) in enumerate(active_series):
+        offset = (idx - (len(active_series) - 1) / 2) * width
         bars = ax.bar(
             x + offset,
             values[cores],
@@ -110,7 +133,7 @@ def main() -> None:
 
     ax.set_xticks(x)
     ax.set_xticklabels(
-        [MODEL_LABELS[model] for model in MODEL_ORDER],
+        [MODEL_LABELS[model] for model in model_order],
         rotation=LABEL_ROTATION_DEG,
         ha="right",
         rotation_mode="anchor",
@@ -125,7 +148,7 @@ def main() -> None:
     ax.tick_params(axis="x", pad=1.0)
     ax.set_ylabel("Cycle(B)", labelpad=0.5, color="white")
     ax.set_xlim(x[0] - 0.33, x[-1] + 0.33)
-    ymax = max(np.nanmax(series.to_numpy()) for series in values.values())
+    ymax = max(float(series.max(skipna=True)) for series in values.values())
     ax.set_ylim(top=ymax * 1.33)
     ax.grid(axis="y", color="#b8b8b8", linestyle="--", linewidth=0.45, alpha=0.85, zorder=0)
     ax.set_axisbelow(True)

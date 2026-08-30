@@ -56,10 +56,17 @@ def load_ratios() -> dict[str, dict[int, float]]:
     return ratios
 
 
-def boxed_legend(ax: plt.Axes) -> None:
+def boxed_legend(ax: plt.Axes, active_cores: list[str]) -> None:
+    style = {
+        "Rocket": ("#6B6B6B", ""),
+        "BOOM": ("#B279A2", "//"),
+    }
     handles = [
-        Patch(facecolor="#6B6B6B", edgecolor="black", linewidth=0.55, label="Rocket"),
-        Patch(facecolor="#B279A2", edgecolor="black", linewidth=0.55, hatch="//", label="BOOM"),
+        Patch(
+            facecolor=style[core][0], edgecolor="black", linewidth=0.55,
+            hatch=style[core][1], label=core
+        )
+        for core in active_cores
     ]
     legend = ax.legend(
         handles=handles,
@@ -72,11 +79,13 @@ def boxed_legend(ax: plt.Axes) -> None:
     style_legend_frame(legend)
 
 
-def apply_compact_style(ax: plt.Axes, x: np.ndarray) -> None:
+def apply_compact_style(
+    ax: plt.Axes, x: np.ndarray, token_labels: list[str]
+) -> None:
     ax.axhline(1.0, color="#D43F35", linestyle="--", linewidth=0.6, zorder=2)
     ax.set_ylabel("F/W ratio", labelpad=0.5)
     ax.set_xticks(x)
-    ax.set_xticklabels(TOKEN_LABELS)
+    ax.set_xticklabels(token_labels)
     ax.tick_params(axis="x", pad=1.0)
     ax.set_xlim(x[0] - 0.32, x[-1] + 0.32)
     ax.set_ylim(0.0, 3.0)
@@ -108,7 +117,17 @@ def main() -> None:
     )
 
     ratios = load_ratios()
-    x = np.arange(len(TOKENS)) * GROUP_STEP
+    available_tokens = [
+        token for token in TOKENS if any(token in ratios[core] for core in ["Rocket", "BOOM"])
+    ]
+    active_cores = [
+        core for core in ["Rocket", "BOOM"] if any(token in ratios[core] for token in available_tokens)
+    ]
+    if not available_tokens or not active_cores:
+        print(f"[plot][SKIP] {OUT_PATH}: no Flash/Window pairs")
+        return
+
+    x = np.arange(len(available_tokens)) * GROUP_STEP
     width = 0.14
 
     fig, ax = plt.subplots(
@@ -117,38 +136,35 @@ def main() -> None:
     )
     fig.subplots_adjust(left=0.32, right=0.99, top=0.74, bottom=0.30)
 
-    ax.bar(
-        x - width / 2,
-        [ratios["Rocket"][token] for token in TOKENS],
-        width,
-        label="Rocket",
-        color="#6B6B6B",
-        edgecolor="black",
-        linewidth=0.45,
-        zorder=3,
-    )
-    ax.bar(
-        x + width / 2,
-        [ratios["BOOM"][token] for token in TOKENS],
-        width,
-        label="BOOM",
-        color="#B279A2",
-        edgecolor="black",
-        linewidth=0.45,
-        hatch="//",
-        zorder=3,
-    )
+    styles = {
+        "Rocket": ("#6B6B6B", ""),
+        "BOOM": ("#B279A2", "//"),
+    }
+    for index, core in enumerate(active_cores):
+        offset = (index - (len(active_cores) - 1) / 2) * width
+        ax.bar(
+            x + offset,
+            [ratios[core].get(token, np.nan) for token in available_tokens],
+            width,
+            label=core,
+            color=styles[core][0],
+            edgecolor="black",
+            linewidth=0.45,
+            hatch=styles[core][1],
+            zorder=3,
+        )
 
-    apply_compact_style(ax, x)
-    boxed_legend(ax)
+    apply_compact_style(ax, x, [str(token) for token in available_tokens])
+    boxed_legend(ax, active_cores)
 
     FIGURE_DIR.mkdir(exist_ok=True)
     fig.savefig(OUT_PATH, bbox_inches=OUTPUT_BBOX, pad_inches=0.0)
     plt.close(fig)
 
-    for token in TOKENS:
-        print(f"{token} tok Rocket Flash/Window: {ratios['Rocket'][token]:.4f}")
-        print(f"{token} tok BOOM Flash/Window: {ratios['BOOM'][token]:.4f}")
+    for token in available_tokens:
+        for core in active_cores:
+            if token in ratios[core]:
+                print(f"{token} tok {core} Flash/Window: {ratios[core][token]:.4f}")
     print(f"Saved: {OUT_PATH}")
 
 

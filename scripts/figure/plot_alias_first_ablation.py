@@ -52,9 +52,6 @@ def load_results() -> pd.DataFrame:
     frame["speedup"] = pd.to_numeric(frame["speedup"], errors="coerce")
     frame = frame.dropna(subset=["speedup"]).copy()
     frame = frame[frame["speedup"] > 0]
-    if frame.empty:
-        raise RuntimeError(f"No complete alias-first ON/OFF pairs in {CSV_PATH}")
-
     frame["order"] = frame["model"].map(
         {model: index for index, model in enumerate(MODEL_ORDER)}
     )
@@ -82,8 +79,15 @@ def main() -> None:
     )
 
     frame = load_results()
-    x = frame["order"].to_numpy(dtype=float)
-    x[x >= 4] += 0.35
+    if frame.empty:
+        print(f"[plot][SKIP] {FIGURE_DIR / (OUT_STEM + '.pdf')}: no complete ON/OFF pairs")
+        return
+
+    is_llm = frame["model"].isin(MODEL_ORDER[4:]).to_numpy()
+    x = np.arange(len(frame), dtype=float)
+    transition = next((index for index, value in enumerate(is_llm) if value), None)
+    if transition is not None and transition > 0:
+        x[transition:] += 0.35
     width = 0.26
 
     fig, ax = plt.subplots(figsize=size_cm(WIDTH_CM, HEIGHT_CM), dpi=300)
@@ -119,7 +123,7 @@ def main() -> None:
         frame["label"], rotation=25, ha="right", rotation_mode="anchor"
     )
     ax.tick_params(axis="x", pad=1.0)
-    ax.set_xlim(-0.55, len(MODEL_ORDER) - 0.45 + 0.35)
+    ax.set_xlim(x[0] - 0.55, x[-1] + 0.55)
     ax.grid(
         axis="y",
         color="#B8B8B8",
@@ -128,7 +132,13 @@ def main() -> None:
         alpha=0.85,
         zorder=0,
     )
-    ax.axvline(3.675, color="#8A8A8A", linewidth=0.45, zorder=1)
+    if transition is not None and transition > 0:
+        ax.axvline(
+            (x[transition - 1] + x[transition]) / 2,
+            color="#8A8A8A",
+            linewidth=0.45,
+            zorder=1,
+        )
     ax.set_axisbelow(True)
 
     for bar, value in zip(bars, frame["speedup"], strict=True):

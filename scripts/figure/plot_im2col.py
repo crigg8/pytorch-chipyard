@@ -103,6 +103,9 @@ def main() -> None:
     )
 
     plot_df = load_speedups()
+    if plot_df.empty:
+        print(f"[plot][SKIP] {OUT_PATH}: no direct/im2col pairs with a baseline")
+        return
     x = np.arange(len(plot_df)) * GROUP_STEP
     width = 0.14
 

@@ -67,7 +67,9 @@ def load_cycles() -> pd.DataFrame:
     return df
 
 
-def boxed_legend(ax: plt.Axes) -> None:
+def boxed_legend(
+    ax: plt.Axes, active_series: list[tuple[str, str, str, str]]
+) -> None:
     by_label = {
         label: Patch(
             facecolor=color,
@@ -75,9 +77,11 @@ def boxed_legend(ax: plt.Axes) -> None:
             linewidth=0.55,
             hatch=hatch,
         )
-        for label, _, color, hatch in SERIES
+        for label, _, color, hatch in active_series
     }
-    legend_order = ["SDPA", "Window", "Flash"]
+    legend_order = [
+        label for label in ["SDPA", "Window", "Flash"] if label in by_label
+    ]
     legend = ax.legend(
         [by_label[label] for label in legend_order],
         legend_order,
@@ -93,6 +97,7 @@ def boxed_legend(ax: plt.Axes) -> None:
 def apply_compact_style(
     ax: plt.Axes,
     x: np.ndarray,
+    token_labels: list[str],
     ylabel: str | None,
     show_y_ticklabels: bool = True,
     reserve_y_axis_space: bool = False,
@@ -102,7 +107,7 @@ def apply_compact_style(
     elif reserve_y_axis_space:
         ax.set_ylabel("Cycle(B)", labelpad=0.5, color="white")
     ax.set_xticks(x)
-    ax.set_xticklabels(TOKEN_LABELS)
+    ax.set_xticklabels(token_labels)
     ax.tick_params(axis="x", pad=1.0)
     ax.set_xlim(x[0] - 0.32, x[-1] + 0.32)
     ax.set_ylim(0.0, 60.0)
@@ -118,9 +123,25 @@ def apply_compact_style(
         spine.set_color("black")
 
 
-def draw_model(df: pd.DataFrame, model: str, ylabel: str | None) -> None:
+def draw_model(df: pd.DataFrame, model: str, ylabel: str | None) -> bool:
     model_df = df[df["model"] == model].set_index("tokens").reindex(TOKENS)
-    x = np.arange(len(TOKENS)) * GROUP_STEP
+    available_tokens = [
+        token
+        for token in TOKENS
+        if model_df.loc[token, [series[1] for series in SERIES]].notna().any()
+    ]
+    active_series = [
+        series
+        for series in SERIES
+        if model_df.loc[available_tokens, series[1]].notna().any()
+    ] if available_tokens else []
+    out_path = FIGURE_DIR / OUTPUTS[model]
+    if not available_tokens or not active_series:
+        print(f"[plot][SKIP] {out_path}: no attention cycle measurements")
+        return False
+
+    model_df = model_df.reindex(available_tokens)
+    x = np.arange(len(available_tokens)) * GROUP_STEP
     width = 0.12
     adjust = {"left": 0.32, "right": 0.99, "top": 0.74, "bottom": 0.30}
 
@@ -130,8 +151,8 @@ def draw_model(df: pd.DataFrame, model: str, ylabel: str | None) -> None:
     )
     fig.subplots_adjust(**adjust)
 
-    for idx, (label, column, color, hatch) in enumerate(SERIES):
-        offset = (idx - (len(SERIES) - 1) / 2) * width
+    for idx, (label, column, color, hatch) in enumerate(active_series):
+        offset = (idx - (len(active_series) - 1) / 2) * width
         ax.bar(
             x + offset,
             model_df[column],
@@ -148,17 +169,18 @@ def draw_model(df: pd.DataFrame, model: str, ylabel: str | None) -> None:
     apply_compact_style(
         ax,
         x,
+        [str(token) for token in available_tokens],
         ylabel,
         show_y_ticklabels=(ylabel is not None),
         reserve_y_axis_space=reserve_y_axis_space,
     )
-    boxed_legend(ax)
+    boxed_legend(ax, active_series)
 
     FIGURE_DIR.mkdir(exist_ok=True)
-    out_path = FIGURE_DIR / OUTPUTS[model]
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0.02)
     print(f"Saved: {out_path}")
     plt.close(fig)
+    return True
 
 
 def main() -> None:

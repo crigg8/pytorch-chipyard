@@ -114,9 +114,18 @@ def _load_log_candidates(path: Path) -> pd.DataFrame:
 def _load_candidates() -> pd.DataFrame:
     log_paths = sorted(LOG_DIR.glob(LOG_GLOB))
     if not log_paths:
-        raise RuntimeError(f"No logs matched {LOG_GLOB}")
+        return pd.DataFrame()
 
-    df = pd.concat((_load_log_candidates(path) for path in log_paths), ignore_index=True)
+    frames: list[pd.DataFrame] = []
+    for path in log_paths:
+        try:
+            frames.append(_load_log_candidates(path))
+        except (OSError, RuntimeError) as exc:
+            print(f"[plot][warn] skipping {path}: {exc}")
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
     dedup_keys = ["bm", "bn", "bk", "tile_i", "tile_j", "tile_k"]
     best_idx = df.groupby(dedup_keys)["speedup"].idxmax()
     df = df.loc[best_idx].copy()
@@ -281,6 +290,12 @@ def _plot(df: pd.DataFrame) -> None:
 
 def main() -> None:
     df = _load_candidates()
+    if df.empty:
+        print(
+            f"[plot][SKIP] {FIGURE_DIR / (OUT_STEM + '.pdf')}: "
+            f"no candidates with baseline blocking {BASELINE_BLOCKING}"
+        )
+        return
     print(
         "Parsed "
         f"{len(df)} unique candidates across "

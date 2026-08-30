@@ -205,22 +205,7 @@ for plot_script in "${plot_scripts[@]}"; do
   if "${PYTHON_CMD[@]}" "$FIGURE_SCRIPT_DIR/$plot_script"; then
     log "finished ${plot_script}"
   else
-    warn "failed ${plot_script}; missing outputs will be replaced with empty plots"
-  fi
-done
-
-empty_count=0
-for expected in "${expected_outputs[@]}"; do
-  figure_label="${expected%%|*}"
-  figure_path="${FIGURE_DIR}/${expected#*|}"
-  if [[ -s "${figure_path}" && "${figure_path}" -nt "${marker}" ]]; then
-    continue
-  fi
-  warn "${figure_label} has insufficient inputs; creating empty plot: ${figure_path}"
-  if "${PYTHON_CMD[@]}" "$FIGURE_SCRIPT_DIR/create_empty_plot.py" "${figure_path}"; then
-    empty_count=$((empty_count + 1))
-  else
-    warn "failed to create empty plot: ${figure_path}"
+    warn "failed ${plot_script}"
     failed=1
   fi
 done
@@ -233,30 +218,32 @@ while IFS= read -r figure_path; do
 done < <(find "$FIGURE_DIR" -maxdepth 1 -type f \( -name '*.pdf' -o -name '*.png' \) -newer "$marker" | sort)
 
 if [[ "$generated_count" -eq 0 ]]; then
-  warn "no figure files were generated"
-  failed=1
+  warn "no figure files had sufficient inputs"
 fi
 
 log "checking the paper figure manifest:"
+skipped_count=0
 for expected in "${expected_outputs[@]}"; do
   figure_label="${expected%%|*}"
   figure_path="${FIGURE_DIR}/${expected#*|}"
   if [[ ! -s "${figure_path}" || ! "${figure_path}" -nt "${marker}" ]]; then
-    warn "${figure_label} was not generated in this run: ${figure_path}"
-    failed=1
+    printf '[plot-results][SKIP] %s=insufficient logs\n' "${figure_label}"
+    skipped_count=$((skipped_count + 1))
     continue
   fi
   printf '[plot-results][PASS] %s=%s\n' "${figure_label}" "${figure_path}"
 done
 
-if [[ "${empty_count}" -gt 0 ]]; then
-  printf '[plot-results] empty plots=%s\n' "${empty_count}"
-fi
-
 if [[ "$failed" -ne 0 ]]; then
-  warn "one or more figure scripts failed; check missing CSV/log inputs above"
+  warn "one or more figure scripts failed"
   exit 1
 fi
 
 printf 'PLOT_RESULTS_DIR=%s\n' "${FIGURE_DIR}"
-printf 'PLOT_RESULTS_STATUS=PASS\n'
+if [[ "${generated_count}" -eq 0 ]]; then
+  printf 'PLOT_RESULTS_STATUS=NO_DATA\n'
+elif [[ "${skipped_count}" -gt 0 ]]; then
+  printf 'PLOT_RESULTS_STATUS=PARTIAL\n'
+else
+  printf 'PLOT_RESULTS_STATUS=PASS\n'
+fi

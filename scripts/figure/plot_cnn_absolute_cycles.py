@@ -102,6 +102,20 @@ def main() -> None:
             if pd.notna(raw_value):
                 values[(model, column)] = float(raw_value) / 1e9
 
+    model_order = [
+        model
+        for model in MODEL_ORDER
+        if any((model, column) in values for _device, column, _label, _color in SERIES)
+    ]
+    active_series = [
+        series
+        for series in SERIES
+        if any((model, series[1]) in values for model in model_order)
+    ]
+    if not model_order or not active_series:
+        print(f"[plot][SKIP] {OUT_PDF}: no absolute-cycle measurements")
+        return
+
     FIGURE_DIR.mkdir(exist_ok=True)
 
     fig, ax = plt.subplots(
@@ -110,12 +124,12 @@ def main() -> None:
     )
     fig.subplots_adjust(left=0.23, right=0.99, top=0.66, bottom=0.30)
 
-    x = np.arange(len(MODEL_ORDER)) * GROUP_STEP
+    x = np.arange(len(model_order)) * GROUP_STEP
     width = 0.14
 
-    for idx, (_device, column, label, color) in enumerate(SERIES):
-        offset = (idx - (len(SERIES) - 1) / 2) * width
-        y = [values[(model, column)] for model in MODEL_ORDER]
+    for idx, (_device, column, label, color) in enumerate(active_series):
+        offset = (idx - (len(active_series) - 1) / 2) * width
+        y = [values.get((model, column), np.nan) for model in model_order]
         ax.bar(
             x + offset,
             y,
@@ -134,7 +148,7 @@ def main() -> None:
     ax.set_ylabel("Cycle(B)", labelpad=0.5)
     ax.set_xticks(x)
     ax.set_xticklabels(
-        [MODEL_LABELS[model] for model in MODEL_ORDER],
+        [MODEL_LABELS[model] for model in model_order],
         rotation=LABEL_ROTATION_DEG,
         ha="right",
         rotation_mode="anchor",
@@ -157,7 +171,10 @@ def main() -> None:
         spine.set_color("black")
 
     handles, labels = ax.get_legend_handles_labels()
-    legend_order = [0, 2, 1]
+    preferred_order = ["Rocket", "Gemmini", "Saturn"]
+    legend_order = [
+        labels.index(label) for label in preferred_order if label in labels
+    ]
     legend = ax.legend(
         [handles[idx] for idx in legend_order],
         [labels[idx] for idx in legend_order],
