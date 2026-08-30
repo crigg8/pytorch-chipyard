@@ -15,8 +15,12 @@ have already configured:
 ## 1. Clone and build the Stage 1 image
 
 ```bash
-git clone --recurse-submodules https://github.com/crigg8/pytorch-chipyard.git
+git clone https://github.com/crigg8/pytorch-chipyard.git
 cd pytorch-chipyard
+
+git submodule update --init \
+  pytorch triton triton_chipyard llvm-project buddy-mlir
+
 source ~/.bashrc
 
 docker build \

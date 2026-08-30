@@ -25,6 +25,7 @@ Run the quick functionality-evaluation slice:
 Completed shared workloads are reused by both simple and full Stage 2 runs.
 The reduced Figure 11 workload is separate; an existing full Figure 11 result
 can satisfy it, but the reduced result never marks the full experiment complete.
+Pending workloads build, run, and remove one FireMarshal image at a time.
 
 Options:
   --skip-plot  Run the Stage 2 workloads without generating partial figures.
@@ -62,7 +63,7 @@ done
 
 export PYTORCH_CHIPYARD_SIMPLE_STAGE2=1
 
-log "running the reusable simple Stage 2 workload set"
+log "running the reusable simple Stage 2 workload set one image at a time"
 bash "${SCRIPT_DIR}/run-stage2.sh" --experiment=simple "${stage2_args[@]}"
 
 if [[ "${skip_plot}" -eq 0 ]]; then

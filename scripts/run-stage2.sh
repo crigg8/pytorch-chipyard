@@ -21,8 +21,8 @@ Usage:
 Run the Stage 2 host workflow in order:
   1. Build model-<N>core.elf files from Stage 1 artifacts.
   2. Package FireMarshal and FireSim workload files.
-  3. Build/install FireMarshal images.
-  4. Run FireSim workloads and collect results.
+  3. Build/install one pending FireMarshal image at a time.
+  4. Run that FireSim workload, collect results, and remove its image.
   5. Complete Table 4's sampled-kernel FireSim and Verilator measurements
      when running the complete, non-selective workflow.
 
@@ -52,14 +52,14 @@ Options:
                         Build and run only the four CNN Gemmini 4-core
                         alias-first off workloads.
   --resume, --resume-firesim
-                        Skip ELF/package/image stages, keep collected results,
-                        and run only FireSim workloads without complete outputs.
+                        Skip ELF/package stages, keep collected results, and
+                        build/run/clean one incomplete FireSim workload at a time.
   --resume-rebuild-images
                         Skip ELF/package stages, deep-clean Linux/OpenSBI,
                         rebuild images only for workloads without complete
                         outputs, then run only those FireSim workloads.
-  --resume-from=NAME    Skip ELF/package/image stages, keep collected results,
-                        and restart FireSim at workload NAME.
+  --resume-from=NAME    Skip ELF/package stages, keep collected results, and
+                        restart per-workload image build/FireSim at NAME.
   --rerun-completed     Run completed FireSim workloads again instead of
                         applying the default completion filter.
   --rvv-panic-retries=N|unlimited
@@ -67,7 +67,8 @@ Options:
                         panic. Default: 0; unlimited must be explicit.
   --skip-elves          Skip model-<N>core.elf generation.
   --skip-package        Skip FireMarshal workload/package generation.
-  --skip-images         Skip FireMarshal image build/install.
+  --skip-images         Use existing FireMarshal images instead of building
+                        them. A missing selected image is a fatal error.
   --skip-firesim        Skip FireSim execution/collection.
   --skip-table4         Skip the sampled-kernel Table 4 workflow.
   --only-table4         Skip ordinary Stage 2 workloads and complete only the
@@ -84,6 +85,10 @@ Environment:
   derives CHIPYARD_ENV_PATH as $CHIPYARD_DIR/env.sh.
   PYTORCH_CHIPYARD_CLEAN_COLLECTED_RESULTS defaults to 0 so existing collected
   results and logs are preserved. Set it to 1 to clean them before FireSim runs.
+  PYTORCH_CHIPYARD_KEEP_FIREMARSHAL_IMAGES=1 preserves successfully run images.
+  The default removes each image after its result has been collected.
+  PYTORCH_CHIPYARD_CLEAN_FIRESIM_RUNS_DIR must remain 1 for Stage 2 so copied
+  rootfs images cannot accumulate between workloads.
   PYTORCH_CHIPYARD_SIMPLE_STAGE2=1 selects the quick partial Figure
   6/8/9/11/13 experiment. Prefer scripts/simple-stage2.sh to set it.
   TABLE4_TVM_AE_ROOT points to the prepared TVM-Gemmini AE tree. It defaults to
@@ -179,7 +184,7 @@ while [[ "$#" -gt 0 ]]; do
       resume_firesim=1
       skip_elves=1
       skip_package=1
-      skip_images=1
+      skip_images=0
       shift
       ;;
     --resume-rebuild-images)
@@ -195,14 +200,14 @@ while [[ "$#" -gt 0 ]]; do
       resume_from_arg="$2"
       skip_elves=1
       skip_package=1
-      skip_images=1
+      skip_images=0
       shift 2
       ;;
     --resume-from=*)
       resume_from_arg="${1#--resume-from=}"
       skip_elves=1
       skip_package=1
-      skip_images=1
+      skip_images=0
       shift
       ;;
     --rerun-completed)
@@ -561,6 +566,15 @@ set +u
 source "${SCRIPT_DIR}/env.sh"
 set -u
 
+if [[ "${skip_firesim}" -eq 0 ]]; then
+  stage2_clean_firesim_runs="${PYTORCH_CHIPYARD_CLEAN_FIRESIM_RUNS_DIR:-1}"
+  [[ "${stage2_clean_firesim_runs}" == "0" || "${stage2_clean_firesim_runs}" == "1" ]] || \
+    die "PYTORCH_CHIPYARD_CLEAN_FIRESIM_RUNS_DIR must be 0 or 1"
+  [[ "${stage2_clean_firesim_runs}" == "1" ]] || \
+    die "Stage 2 requires PYTORCH_CHIPYARD_CLEAN_FIRESIM_RUNS_DIR=1; disabling it accumulates 8GiB FireSim rootfs copies"
+  export PYTORCH_CHIPYARD_CLEAN_FIRESIM_RUNS_DIR=1
+fi
+
 if [[ "${experiment_name}" == "simple" ]]; then
   export PYTORCH_CHIPYARD_SIMPLE_STAGE2=1
 fi
@@ -634,6 +648,110 @@ collected_result_complete() {
   fi
   if [[ -f "${result_dir}/run.log" ]]; then
     grep -Fq '[runner] model_ret=0' "${result_dir}/run.log" || return 1
+  fi
+}
+
+append_unique_workload() {
+  local workload="$1"
+  local existing
+
+  [[ -n "${workload}" ]] || return 0
+  [[ "${workload}" =~ ^[A-Za-z0-9._-]+$ ]] || \
+    die "invalid workload '${workload}'"
+  for existing in "${stage2_firesim_workloads[@]}"; do
+    [[ "${existing}" == "${workload}" ]] && return 0
+  done
+  stage2_firesim_workloads+=("${workload}")
+}
+
+load_stage2_firesim_workloads() {
+  local arg payload workload workload_json
+  local requested=()
+
+  stage2_firesim_workloads=()
+  if [[ "${#workload_args[@]}" -gt 0 ]]; then
+    for arg in "${workload_args[@]}"; do
+      payload="${arg#--workload=}"
+      IFS=',' read -r -a requested <<<"${payload}"
+      for workload in "${requested[@]}"; do
+        append_unique_workload "${workload}"
+      done
+    done
+  else
+    while IFS= read -r -d '' workload_json; do
+      append_unique_workload "$(basename -- "${workload_json}" .json)"
+    done < <(find "${PYTORCH_CHIPYARD_WORKLOAD_DIR}" -maxdepth 1 -type f \
+      -name '*.json' ! -name '*base.json' -print0 | sort -z)
+  fi
+
+  [[ "${#stage2_firesim_workloads[@]}" -gt 0 ]] || \
+    die "no FireSim workloads selected or packaged"
+}
+
+filter_stage2_firesim_workloads() {
+  local workload
+  local found_resume_from=0
+  local filtered=()
+
+  if [[ -z "${resume_from_arg}" ]]; then
+    found_resume_from=1
+  fi
+
+  for workload in "${stage2_firesim_workloads[@]}"; do
+    if [[ "${found_resume_from}" -eq 0 ]]; then
+      if [[ "${workload}" == "${resume_from_arg}" ]]; then
+        found_resume_from=1
+      else
+        continue
+      fi
+    fi
+
+    if [[ "${resume_firesim}" -eq 1 ]] && collected_result_complete "${workload}"; then
+      log "resume: skipping completed workload ${workload}"
+      continue
+    fi
+    filtered+=("${workload}")
+  done
+
+  [[ "${found_resume_from}" -eq 1 ]] || \
+    die "resume workload '${resume_from_arg}' was not found in the selected/discovered workload list"
+  stage2_firesim_workloads=("${filtered[@]}")
+}
+
+require_installed_firemarshal_image() {
+  local workload="$1"
+  local image_dir="${FIREMARSHAL_IMAGE_DIR}/${workload}"
+
+  [[ -s "${image_dir}/${workload}.img" ]] || \
+    die "missing FireMarshal image for ${workload}: ${image_dir}/${workload}.img; rerun without --skip-images"
+  [[ -s "${image_dir}/${workload}-bin" ]] || \
+    die "missing FireMarshal boot binary for ${workload}: ${image_dir}/${workload}-bin; rerun without --skip-images"
+}
+
+remove_installed_firemarshal_image() {
+  local workload="$1"
+  local keep_images="${PYTORCH_CHIPYARD_KEEP_FIREMARSHAL_IMAGES:-0}"
+  local image_dir
+
+  [[ "${keep_images}" == "0" || "${keep_images}" == "1" ]] || \
+    die "PYTORCH_CHIPYARD_KEEP_FIREMARSHAL_IMAGES must be 0 or 1"
+  if [[ "${keep_images}" == "1" ]]; then
+    log "preserving FireMarshal image for ${workload}"
+    return 0
+  fi
+
+  [[ -n "${FIREMARSHAL_IMAGE_DIR}" && "${FIREMARSHAL_IMAGE_DIR}" == /* && \
+     "${FIREMARSHAL_IMAGE_DIR}" != "/" ]] || \
+    die "refusing unsafe FireMarshal image cleanup root '${FIREMARSHAL_IMAGE_DIR}'"
+  [[ "${workload}" =~ ^[A-Za-z0-9._-]+$ ]] || \
+    die "refusing cleanup for invalid workload '${workload}'"
+  image_dir="${FIREMARSHAL_IMAGE_DIR}/${workload}"
+  [[ "$(dirname -- "${image_dir}")" == "${FIREMARSHAL_IMAGE_DIR}" ]] || \
+    die "refusing unsafe FireMarshal image cleanup target '${image_dir}'"
+
+  if [[ -e "${image_dir}" ]]; then
+    rm -rf -- "${image_dir}"
+    log "removed completed FireMarshal image: ${image_dir}"
   fi
 }
 
@@ -815,8 +933,50 @@ if [[ "${skip_firesim}" -eq 0 && "${#workload_args[@]}" -eq 0 ]]; then
     "${firesim_preflight_args[@]}"
 fi
 
-if [[ "${skip_images}" -eq 0 ]]; then
-  log "building and installing FireMarshal images"
+if [[ "${skip_firesim}" -eq 0 ]]; then
+  load_stage2_firesim_workloads
+  filter_stage2_firesim_workloads
+  if [[ "${#stage2_firesim_workloads[@]}" -eq 0 ]]; then
+    log "resume: no pending FireSim workloads"
+  else
+    log "running ${#stage2_firesim_workloads[@]} FireSim workload(s) with one image at a time"
+  fi
+
+  built_image_count=0
+  for workload in "${stage2_firesim_workloads[@]}"; do
+    image_built=0
+    if [[ "${skip_images}" -eq 0 ]]; then
+      image_args=(--workload="${workload}")
+      if [[ "${built_image_count}" -gt 0 ]]; then
+        image_args+=(--reuse-shared-kernel-build)
+      fi
+      log "${workload}: building and installing its FireMarshal image"
+      bash "${SCRIPT_DIR}/build-firemarshal-images.sh" "${image_args[@]}"
+      image_built=1
+      built_image_count=$((built_image_count + 1))
+    fi
+    require_installed_firemarshal_image "${workload}"
+
+    firesim_args=(--workload="${workload}")
+    if [[ -n "${rvv_panic_retries_arg}" ]]; then
+      firesim_args+=(--rvv-panic-retries="${rvv_panic_retries_arg}")
+    fi
+    log "${workload}: running FireSim"
+    bash "${SCRIPT_DIR}/run-firesim-workloads.sh" "${firesim_args[@]}"
+
+    # A failed FireSim invocation exits above and deliberately leaves the image
+    # in place for diagnosis/retry. Only a successfully collected workload is
+    # eligible for ephemeral image cleanup.
+    if [[ "${image_built}" -eq 1 ]]; then
+      remove_installed_firemarshal_image "${workload}"
+    fi
+  done
+  printf '[stage2][PASS] FireSim results=%s\n' "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}"
+elif [[ "${skip_images}" -eq 0 ]]; then
+  # Building images without running FireSim is an explicit diagnostic mode.
+  # Preserve the old batch behavior because there is no successful run after
+  # which an image can safely be removed.
+  log "building and installing FireMarshal images without FireSim execution"
   image_args=()
   if [[ "${rebuild_pending_images}" -eq 1 || "${resume_firesim}" -eq 1 ]]; then
     image_args+=(--pending-only)
@@ -833,22 +993,6 @@ if [[ "${skip_images}" -eq 0 ]]; then
   bash "${SCRIPT_DIR}/build-firemarshal-images.sh" "${image_args[@]}"
   printf '[stage2][PASS] FireMarshal images=%s FireSim workloads=%s\n' \
     "${FIREMARSHAL_IMAGE_DIR}" "${FIRESIM_WORKLOAD_DIR}"
-fi
-
-if [[ "${skip_firesim}" -eq 0 ]]; then
-  firesim_args=("${workload_args[@]}")
-  if [[ "${resume_firesim}" -eq 1 ]]; then
-    firesim_args+=(--resume)
-  fi
-  if [[ -n "${resume_from_arg}" ]]; then
-    firesim_args+=(--resume-from="${resume_from_arg}")
-  fi
-  if [[ -n "${rvv_panic_retries_arg}" ]]; then
-    firesim_args+=(--rvv-panic-retries="${rvv_panic_retries_arg}")
-  fi
-  log "running FireSim workloads"
-  bash "${SCRIPT_DIR}/run-firesim-workloads.sh" "${firesim_args[@]}"
-  printf '[stage2][PASS] FireSim results=%s\n' "${PYTORCH_CHIPYARD_FIGURE_RESULTS_WORKLOAD_DIR}"
 fi
 
 if [[ "${skip_table4}" -eq 0 ]]; then

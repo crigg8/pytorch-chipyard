@@ -104,6 +104,16 @@ clean_firesim_runs_dir() {
   log "cleaned FIRESIM_RUNS_DIR: ${dir}"
 }
 
+clean_completed_firesim_run() {
+  local keep_runfarm="${PYTORCH_CHIPYARD_KEEP_RUNFARM:-${KEEP_RUNFARM:-0}}"
+
+  if [[ "${keep_runfarm}" == "1" ]]; then
+    log "preserving FIRESIM_RUNS_DIR because the run farm was kept"
+    return 0
+  fi
+  clean_firesim_runs_dir
+}
+
 clean_dir_contents() {
   local label="$1"
   local dir="$2"
@@ -252,6 +262,16 @@ load_workloads() {
   WORKLOADS=("${workloads[@]}")
 }
 
+require_installed_workload_image() {
+  local workload="$1"
+  local image_dir="${FIREMARSHAL_IMAGE_DIR}/${workload}"
+
+  [[ -s "${image_dir}/${workload}.img" ]] || \
+    die "${workload} FireMarshal image is missing: ${image_dir}/${workload}.img; build this workload image before FireSim execution"
+  [[ -s "${image_dir}/${workload}-bin" ]] || \
+    die "${workload} FireMarshal boot binary is missing: ${image_dir}/${workload}-bin; build this workload image before FireSim execution"
+}
+
 apply_resume_filters() {
   local workload
   local found=0
@@ -300,6 +320,7 @@ validate_pending_workload_packages() {
   for workload in "${WORKLOADS[@]}"; do
     require_file "${PYTORCH_CHIPYARD_WORKLOAD_DIR}/${workload}.json"
     require_file "${FIRESIM_WORKLOAD_DIR}/${workload}.json"
+    require_installed_workload_image "${workload}"
     require_boom_flex_kernel_package "${workload}"
   done
 }
@@ -1245,6 +1266,7 @@ for workload in "${WORKLOADS[@]}"; do
     clean_firesim_runs_dir
     : >"${marker}"
     if run_workload "${workload}" "${hw_config}" "${runtime}" "${marker}"; then
+      clean_completed_firesim_run
       break
     else
       status=$?
