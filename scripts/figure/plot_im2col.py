@@ -21,7 +21,7 @@ from plot_style import legend_box_kwargs, style_legend_frame
 
 CSV_PATH = ROOT_DIR / ".csv" / "cnn_result.csv"
 FIGURE_DIR = ROOT_DIR / "figures"
-OUT_PATH = FIGURE_DIR / "im2col_speedup.pdf"
+OUT_PATH = FIGURE_DIR / "Fig10a.pdf"
 
 WIDTH_CM = 3.0
 HEIGHT_CM = 4.15

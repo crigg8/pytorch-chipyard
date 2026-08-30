@@ -22,7 +22,7 @@ from plot_style import legend_box_kwargs, style_legend_frame
 
 CSV_PATH = ROOT_DIR / ".csv" / "spda_prefill_256.csv"
 FIGURE_DIR = ROOT_DIR / "figures"
-OUT_PATH = FIGURE_DIR / "spda_prefill_256.pdf"
+OUT_PATH = FIGURE_DIR / "Fig6b.pdf"
 
 WIDTH_CM = 4.15
 HEIGHT_CM = 4.15

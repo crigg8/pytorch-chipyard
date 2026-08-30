@@ -651,7 +651,7 @@ def draw_figure(backend_runs: list[dict], scaling_runs: list[dict]) -> None:
         draw_backend_panel(ax, backend_runs)
         style_axes(ax)
         add_category_legend(ax)
-        out_path = FIGURE_DIR / "mobilenet_squeezenet_backend_attribution.pdf"
+        out_path = FIGURE_DIR / "Fig8a.pdf"
         fig.savefig(out_path)
         print(f"Saved: {out_path}")
         plt.close(fig)
@@ -675,7 +675,7 @@ def draw_figure(backend_runs: list[dict], scaling_runs: list[dict]) -> None:
         draw_scaling_panel(ax, scaling_runs)
         style_axes(ax)
         add_category_legend(ax)
-        out_path = FIGURE_DIR / "mobilenet_alexnet_scaling_attribution.pdf"
+        out_path = FIGURE_DIR / "Fig8b.pdf"
         fig.savefig(out_path)
         print(f"Saved: {out_path}")
         plt.close(fig)

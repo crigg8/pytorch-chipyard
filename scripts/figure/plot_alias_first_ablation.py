@@ -19,7 +19,7 @@ from plot_style import legend_box_kwargs, size_cm, style_legend_frame
 
 CSV_PATH = ROOT_DIR / ".csv" / "alias_first_ablation.csv"
 FIGURE_DIR = ROOT_DIR / "figures"
-OUT_STEM = "alias_first_ablation"
+OUT_STEM = "Fig9"
 
 WIDTH_CM = 8.6
 HEIGHT_CM = 2.8
@@ -166,10 +166,9 @@ def main() -> None:
         spine.set_linewidth(0.6)
 
     FIGURE_DIR.mkdir(exist_ok=True)
-    for extension in ("pdf", "png"):
-        output = FIGURE_DIR / f"{OUT_STEM}.{extension}"
-        fig.savefig(output, dpi=300, facecolor="white")
-        print(f"Saved: {output}")
+    output = FIGURE_DIR / f"{OUT_STEM}.pdf"
+    fig.savefig(output, dpi=300, facecolor="white")
+    print(f"Saved: {output}")
     plt.close(fig)
 
 

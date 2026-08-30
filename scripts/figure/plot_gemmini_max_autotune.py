@@ -30,7 +30,7 @@ WORKSPACE_DIR = ROOT_DIR.parent
 LOG_DIR = Path(os.environ.get("PYTORCH_CHIPYARD_LOG_DIR", WORKSPACE_DIR / "examples" / ".logs"))
 
 LOG_GLOB = "*gemmini-max-autotune*4core-autotune.log"
-OUT_STEM = "autotune_gemmini_max"
+OUT_STEM = "Fig11"
 
 SIMPLE_STAGE2 = os.environ.get(
     "PYTORCH_CHIPYARD_SIMPLE_STAGE2", ""
@@ -279,13 +279,10 @@ def _plot(df: pd.DataFrame) -> None:
         spine.set_linewidth(1.1)
 
     out_pdf = FIGURE_DIR / f"{OUT_STEM}.pdf"
-    out_png = FIGURE_DIR / f"{OUT_STEM}.png"
     fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.01)
     plt.close(fig)
 
     print(f"Saved: {out_pdf}")
-    print(f"Saved: {out_png}")
 
 
 def main() -> None:

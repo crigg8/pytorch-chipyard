@@ -23,7 +23,7 @@ from plot_style import legend_box_kwargs, style_legend_frame
 
 CSV_PATH = ROOT_DIR / ".csv" / "flash_window_core_ratio.csv"
 FIGURE_DIR = ROOT_DIR / "figures"
-OUT_PATH = FIGURE_DIR / "flash_window_core_ratio.pdf"
+OUT_PATH = FIGURE_DIR / "Fig13c.pdf"
 
 WIDTH_CM = 3.0
 HEIGHT_CM = 4.15

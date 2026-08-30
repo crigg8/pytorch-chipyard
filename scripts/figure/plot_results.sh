@@ -146,7 +146,7 @@ log "python      : $python_path"
 if [[ "${only_alias_first}" -eq 1 ]]; then
   plot_scripts=(plot_alias_first_ablation.py)
   expected_outputs=(
-    "Figure 9|alias_first_ablation.pdf"
+    "Figure 9|Fig9.pdf"
   )
 elif [[ "${simple_stage2}" -eq 1 ]]; then
   plot_scripts=(
@@ -159,13 +159,13 @@ elif [[ "${simple_stage2}" -eq 1 ]]; then
     plot_flash_window_core_ratio.py
   )
   expected_outputs=(
-    "Figure 6(a), partial|cnn_absolute_cycles.pdf"
-    "Figure 6(b), partial|spda_prefill_256.pdf"
-    "Figure 8(a), partial|mobilenet_squeezenet_backend_attribution.pdf"
-    "Figure 9, partial|alias_first_ablation.pdf"
-    "Figure 11, partial|autotune_gemmini_max.pdf"
-    "Figure 13(a), partial|flex_prefill_opt.pdf"
-    "Figure 13(c), partial|flash_window_core_ratio.pdf"
+    "Figure 6(a), partial|Fig6a.pdf"
+    "Figure 6(b), partial|Fig6b.pdf"
+    "Figure 8(a), partial|Fig8a.pdf"
+    "Figure 9, partial|Fig9.pdf"
+    "Figure 11, partial|Fig11.pdf"
+    "Figure 13(a), partial|Fig13a.pdf"
+    "Figure 13(c), partial|Fig13c.pdf"
   )
 else
   plot_scripts=(
@@ -181,21 +181,21 @@ else
     plot_gemmini_max_autotune.py
   )
   expected_outputs=(
-    "Figure 6(a)|cnn_absolute_cycles.pdf"
-    "Figure 6(b)|spda_prefill_256.pdf"
-    "Figure 7(a)|cnn_result_rocket.pdf"
-    "Figure 7(b)|cnn_result_saturn.pdf"
-    "Figure 7(c)|cnn_result_gemmini.pdf"
-    "Figure 8(a)|mobilenet_squeezenet_backend_attribution.pdf"
-    "Figure 8(b)|mobilenet_alexnet_scaling_attribution.pdf"
-    "Figure 9|alias_first_ablation.pdf"
-    "Figure 10(a)|im2col_speedup.pdf"
-    "Figure 10(b)|im2col_site_attribution_resnet.pdf"
-    "Figure 10(c)|im2col_site_attribution_squeezenet.pdf"
-    "Figure 11|autotune_gemmini_max.pdf"
-    "Figure 13(a)|flex_prefill_opt.pdf"
-    "Figure 13(b)|flex_prefill_pythia.pdf"
-    "Figure 13(c)|flash_window_core_ratio.pdf"
+    "Figure 6(a)|Fig6a.pdf"
+    "Figure 6(b)|Fig6b.pdf"
+    "Figure 7(a)|Fig7a.pdf"
+    "Figure 7(b)|Fig7b.pdf"
+    "Figure 7(c)|Fig7c.pdf"
+    "Figure 8(a)|Fig8a.pdf"
+    "Figure 8(b)|Fig8b.pdf"
+    "Figure 9|Fig9.pdf"
+    "Figure 10(a)|Fig10a.pdf"
+    "Figure 10(b)|Fig10b.pdf"
+    "Figure 10(c)|Fig10c.pdf"
+    "Figure 11|Fig11.pdf"
+    "Figure 13(a)|Fig13a.pdf"
+    "Figure 13(b)|Fig13b.pdf"
+    "Figure 13(c)|Fig13c.pdf"
   )
 fi
 
@@ -215,7 +215,7 @@ generated_count=0
 while IFS= read -r figure_path; do
   generated_count=$((generated_count + 1))
   printf '[plot-results]   %s\n' "$figure_path"
-done < <(find "$FIGURE_DIR" -maxdepth 1 -type f \( -name '*.pdf' -o -name '*.png' \) -newer "$marker" | sort)
+done < <(find "$FIGURE_DIR" -maxdepth 1 -type f -name '*.pdf' -newer "$marker" | sort)
 
 if [[ "$generated_count" -eq 0 ]]; then
   warn "no figure files had sufficient inputs"

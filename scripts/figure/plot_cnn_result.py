@@ -273,15 +273,15 @@ def main() -> None:
     df = load_cycles()
     FIGURE_DIR.mkdir(exist_ok=True)
     draw_panel(
-        df, "Rocket", ROCKET_CONFIGS, "4-core", "cnn_result_rocket.pdf",
+        df, "Rocket", ROCKET_CONFIGS, "4-core", "Fig7a.pdf",
         ROCKET_WIDTH_CM, ROCKET_ADJUST, "Norm. Perf."
     )
     draw_panel(
-        df, "Saturn", SATURN_CONFIGS, "2 Saturn", "cnn_result_saturn.pdf",
+        df, "Saturn", SATURN_CONFIGS, "2 Saturn", "Fig7b.pdf",
         BACKEND_WIDTH_CM, BACKEND_ADJUST, None
     )
     draw_panel(
-        df, "Gemmini", GEMMINI_CONFIGS, "Dual Gemmini", "cnn_result_gemmini.pdf",
+        df, "Gemmini", GEMMINI_CONFIGS, "Dual Gemmini", "Fig7c.pdf",
         BACKEND_WIDTH_CM, BACKEND_ADJUST, None
     )
 
