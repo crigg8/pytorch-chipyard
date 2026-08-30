@@ -55,6 +55,8 @@ case "${PYTORCH_CHIPYARD_SIMPLE_STAGE2:-0}" in
 esac
 
 select_python_cmd() {
+  local chipyard_python
+
   if [[ -n "${PYTHON_BIN:-}" ]]; then
     PYTHON_CMD=("${PYTHON_BIN}")
     return
@@ -70,6 +72,17 @@ PY
       PYTHON_CMD=(conda run -n "${PYTORCH_CHIPYARD_CONDA_ENV}" python)
       return
     fi
+  fi
+
+  chipyard_python="${CHIPYARD_DIR:+${CHIPYARD_DIR}/.conda-env/bin/python3}"
+  if [[ -x "${chipyard_python}" ]] && "${chipyard_python}" - <<'PY' >/dev/null 2>&1
+import matplotlib
+import numpy
+import pandas
+PY
+  then
+    PYTHON_CMD=("${chipyard_python}")
+    return
   fi
 
   PYTHON_CMD=(python3)
@@ -192,7 +205,22 @@ for plot_script in "${plot_scripts[@]}"; do
   if "${PYTHON_CMD[@]}" "$FIGURE_SCRIPT_DIR/$plot_script"; then
     log "finished ${plot_script}"
   else
-    warn "failed ${plot_script}"
+    warn "failed ${plot_script}; missing outputs will be replaced with empty plots"
+  fi
+done
+
+empty_count=0
+for expected in "${expected_outputs[@]}"; do
+  figure_label="${expected%%|*}"
+  figure_path="${FIGURE_DIR}/${expected#*|}"
+  if [[ -s "${figure_path}" && "${figure_path}" -nt "${marker}" ]]; then
+    continue
+  fi
+  warn "${figure_label} has insufficient inputs; creating empty plot: ${figure_path}"
+  if "${PYTHON_CMD[@]}" "$FIGURE_SCRIPT_DIR/create_empty_plot.py" "${figure_path}"; then
+    empty_count=$((empty_count + 1))
+  else
+    warn "failed to create empty plot: ${figure_path}"
     failed=1
   fi
 done
@@ -220,6 +248,10 @@ for expected in "${expected_outputs[@]}"; do
   fi
   printf '[plot-results][PASS] %s=%s\n' "${figure_label}" "${figure_path}"
 done
+
+if [[ "${empty_count}" -gt 0 ]]; then
+  printf '[plot-results] empty plots=%s\n' "${empty_count}"
+fi
 
 if [[ "$failed" -ne 0 ]]; then
   warn "one or more figure scripts failed; check missing CSV/log inputs above"

@@ -161,6 +161,85 @@ def discover_runs(results_dir: Path) -> list[WorkloadRun]:
     return runs
 
 
+def canonical_workload_name(workload: str) -> str:
+    if workload.startswith("mobilenet-"):
+        workload = "mobilenetv2-" + workload[len("mobilenet-") :]
+    elif workload.startswith("resnet-"):
+        workload = "resnet50-" + workload[len("resnet-") :]
+
+    is_cnn = workload.startswith(
+        tuple(f"{model}-" for model in CNN_MODEL_ALIASES)
+    )
+    if is_cnn:
+        workload = workload.replace("-rocket-", "-scalar-")
+    elif workload.startswith(tuple(f"{model}-" for model in LLM_MODELS)):
+        workload = workload.replace("-scalar-", "-rocket-")
+
+    if workload.startswith("gemmini-max-autotune-fp32-"):
+        workload = (
+            "gemmini-max-autotune-gemmini-"
+            + workload[len("gemmini-max-autotune-fp32-") :]
+        )
+    return workload
+
+
+def discover_compat_runs(log_dir: Path) -> list[WorkloadRun]:
+    latest: dict[str, tuple[Path, str]] = {}
+    for model_log in log_dir.glob("*-model.log"):
+        alias = model_log.name[: -len("-model.log")]
+        workload = canonical_workload_name(alias)
+        previous = latest.get(workload)
+        candidate_key = (model_log.stat().st_mtime_ns, alias == workload)
+        if previous is None:
+            latest[workload] = (model_log, alias)
+            continue
+        previous_path, previous_alias = previous
+        previous_key = (
+            previous_path.stat().st_mtime_ns,
+            previous_alias == workload,
+        )
+        if candidate_key > previous_key:
+            latest[workload] = (model_log, alias)
+
+    runs: list[WorkloadRun] = []
+    for workload, (model_log, alias) in sorted(latest.items()):
+        try:
+            model, tags, core, tokens = parse_workload_name(workload)
+            avg_cycles, samples = parse_model_log(model_log)
+        except ValueError as exc:
+            warn(str(exc))
+            continue
+
+        autotune_candidates = [
+            log_dir / f"{candidate}-autotune.log"
+            for candidate in model_alias_workloads(workload)
+        ]
+        autotune_candidates.append(log_dir / f"{alias}-autotune.log")
+        existing_autotune_logs = [
+            path for path in autotune_candidates if path.exists()
+        ]
+        autotune_log = (
+            max(existing_autotune_logs, key=lambda path: path.stat().st_mtime_ns)
+            if existing_autotune_logs
+            else None
+        )
+        runs.append(
+            WorkloadRun(
+                workload=workload,
+                result_dir=log_dir,
+                model_log=model_log,
+                autotune_log=autotune_log,
+                avg_cycles=avg_cycles,
+                samples=samples,
+                model=model,
+                tags=tags,
+                core=core,
+                tokens=tokens,
+            )
+        )
+    return runs
+
+
 def model_alias_workloads(workload: str) -> list[str]:
     aliases = {workload.lower()}
     changed = True
@@ -201,27 +280,47 @@ def model_alias_workloads(workload: str) -> list[str]:
     return sorted(aliases)
 
 
-def reset_generated_inputs() -> None:
+def reset_generated_csvs() -> None:
     CSV_DIR.mkdir(exist_ok=True)
     LOG_DIR.mkdir(exist_ok=True)
     for csv_name in GENERATED_CSVS:
         path = CSV_DIR / csv_name
         if path.exists():
             path.unlink()
-    for log_path in LOG_DIR.glob("*.log"):
-        log_path.unlink()
+
+
+def copy_log_if_newer(source: Path, destination: Path) -> bool:
+    if (
+        destination.exists()
+        and destination.stat().st_mtime_ns >= source.stat().st_mtime_ns
+    ):
+        return False
+    shutil.copy2(source, destination)
+    return True
 
 
 def prepare_compat_logs(runs: list[WorkloadRun]) -> None:
-    copied = 0
+    updated = 0
+    retained = 0
     for run in runs:
         for alias in model_alias_workloads(run.workload):
-            shutil.copyfile(run.model_log, LOG_DIR / f"{alias}-model.log")
-            copied += 1
+            if copy_log_if_newer(
+                run.model_log, LOG_DIR / f"{alias}-model.log"
+            ):
+                updated += 1
+            else:
+                retained += 1
             if run.autotune_log is not None:
-                shutil.copyfile(run.autotune_log, LOG_DIR / f"{alias}-autotune.log")
-                copied += 1
-    log(f"wrote {copied} compatibility logs under {LOG_DIR}")
+                if copy_log_if_newer(
+                    run.autotune_log, LOG_DIR / f"{alias}-autotune.log"
+                ):
+                    updated += 1
+                else:
+                    retained += 1
+    log(
+        f"compatibility logs under {LOG_DIR}: "
+        f"updated {updated}, retained {retained}"
+    )
 
 
 def has_tag(run: WorkloadRun, tag: str) -> bool:
@@ -662,16 +761,25 @@ def main() -> None:
     args = parser.parse_args()
 
     results_dir = args.results_dir.resolve()
-    if not results_dir.exists():
-        raise SystemExit(f"results directory not found: {results_dir}")
+    reset_generated_csvs()
 
-    reset_generated_inputs()
-    runs = discover_runs(results_dir)
-    if not runs:
-        raise SystemExit(f"no model.log files found under {results_dir}")
-    log(f"discovered {len(runs)} workload result(s) under {results_dir}")
+    result_runs: list[WorkloadRun] = []
+    if results_dir.exists():
+        result_runs = discover_runs(results_dir)
+        log(
+            f"discovered {len(result_runs)} workload result(s) "
+            f"under {results_dir}"
+        )
+    else:
+        warn(f"results directory not found: {results_dir}")
 
-    prepare_compat_logs(runs)
+    prepare_compat_logs(result_runs)
+    runs = discover_compat_runs(LOG_DIR)
+    if runs:
+        log(f"loaded {len(runs)} latest workload log(s) from {LOG_DIR}")
+    else:
+        warn(f"no compatible model logs found under {LOG_DIR}")
+
     generated = [
         write_cnn_result_csv(runs),
         write_alias_first_ablation_csv(runs),

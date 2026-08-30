@@ -93,15 +93,13 @@ If Stage 2 is started in a new shell, load the preconfigured account
 environment once before running it. `run-stage2.sh` also sources
 `~/.ae-env.sh` automatically, so the host paths are identical in every shell.
 
-```bash
-source ~/.bashrc
-cd ~/pytorch-chipyard
-```
-
 The complete Stage 2 workflow takes a long time, so the recommended AE flow is
 split into five independently resumable experiment units:
 
 ```bash
+# Simple test: Partial Figures 6ab, 8a, 9, 11, 13ac
+bash scripts/simple-stage2.sh
+
 # Figures 7, 8, and 9, plus Table 5
 bash scripts/run-stage2.sh --experiment=figures-7-8-9-table5
 
