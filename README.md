@@ -38,6 +38,9 @@ script.
 Docker provides a self-contained alternative for the compiler installation.
 It does not install or configure the FPGA host components listed above.
 
+A Dockerized version of the complete workflow is being validated for the
+camera-ready release. The currently available image covers Stage 1.
+
 ```bash
 git clone https://github.com/crigg8/pytorch-chipyard.git
 cd pytorch-chipyard

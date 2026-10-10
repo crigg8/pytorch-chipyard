@@ -14,6 +14,13 @@ operations.
 - `libtriton_chipyard.a` replaces a bufferized Linalg operation inside a Triton
   kernel with an external function call.
 
+Use the Aten path when the hardware operation corresponds directly to a model
+operator. Use the Linalg path when several operators should reuse one compiler
+lowering rule. Both tutorials use Gemmini as a concrete hardware API; for a
+different accelerator, replace the C++ implementation while preserving the
+documented C ABI and matching the target ISA, tensor layout, and hardware
+configuration. The final section explains where to add or modify a compiler
+pass when a registration rule alone is insufficient.
 
 ## Common environment setup
 
@@ -118,7 +125,7 @@ Copy the following code block to `$CUSTOM_MV_DIR/gemmini_mv.cpp`. The
 `extern "C"` function name must match the `symbol` used later in the Python
 registration.
 
-```{literalinclude} ../examples/custom-mv/gemmini_mv.cpp
+```{literalinclude} _examples/gemmini_mv.cpp
 :language: cpp
 :caption: tutorial/custom-mv/gemmini_mv.cpp
 ```
@@ -399,7 +406,7 @@ Copy the following code block to
 `$CUSTOM_LINALG_DIR/gemmini_matmul.cpp`. The archive exports C symbols for
 both GEMV and general matmul.
 
-```{literalinclude} ../examples/custom-linalg-matmul/gemmini_matmul.cpp
+```{literalinclude} _examples/gemmini_matmul.cpp
 :language: cpp
 :caption: tutorial/custom-linalg-matmul/gemmini_matmul.cpp
 ```
@@ -616,8 +623,11 @@ compatibility path, but this tutorial uses the decorator registry.
 The model's `aten.mm` is compiled through Inductor/Triton as usual. Restrict
 the max-autotune GEMM backend to `TRITON` so that the Gemmini backend selects a
 Triton GEMM. `triton-chipyard-opt` must already have been built with the
-`linalg-to-function-call` pass. If you have just added this pass or changed its
-source, rebuild the compiler stack and the Stage 1 image.
+`linalg-to-function-call` pass, which is included in the pinned backend. Changing
+the Python registration does not require rebuilding the compiler. If you change
+the pass implementation, rebuild the compiler used by your workflow. For a
+Docker-based workflow, rebuild the Stage 1 image and run compilation in that
+new image:
 
 ```bash
 docker build \
@@ -715,3 +725,75 @@ CHIPYARD_OMP_NUM_THREADS=1 bash "$CUSTOM_LINALG_ARTIFACT/build.sh"
 ```bash
 test -x "$CUSTOM_LINALG_ARTIFACT/model.elf"
 ```
+
+## Extending the compiler passes
+
+The Linalg tutorial uses the existing `linalg-to-function-call` pass. The
+Python registration supplies the target operation, external symbol, and
+operand constraints. In `triton_chipyard/backend/compiler.py`,
+`_ttir_to_ttsharedir` first bufferizes the IR, applies each registered rule,
+and saves `ttshared.mlir` before Buddy-MLIR lowering. This placement gives the
+pass memref operands that can be passed to the C ABI shown above.
+
+### Inspect the existing lowering
+
+After running the Linalg tutorial with `TRITON_CHIPYARD_DUMP_PATH` set, the
+dump directory also contains `ttshared-bufferized.mlir`, the input before
+external-call replacement. To inspect the pass independently, run:
+
+```bash
+"$TRITON_CHIPYARD_OPT_PATH" \
+  "$CUSTOM_LINALG_ARTIFACT/ttshared-bufferized.mlir" \
+  --linalg-to-function-call='target-op=linalg.matmul function=triton_chipyard_matmul_f32' \
+  -o "$CUSTOM_LINALG_ARTIFACT/ttshared-inspect.mlir"
+
+grep -n 'call @triton_chipyard_matmul_f32' \
+  "$CUSTOM_LINALG_ARTIFACT/ttshared-inspect.mlir"
+```
+
+This inspection command uses the rank-2 matmul example. The Python registry
+also supplies the `MemRefPattern` constraints needed when multiple rules or
+operand layouts are present. In the transformed IR, the matched
+`linalg.matmul` becomes `func.call`; the kernel object retains an external
+symbol reference that is resolved by the custom archive during ELF linking.
+
+### Add or change a lowering pass
+
+For hardware that needs a new IR transformation, use the existing pass as a
+template. The relevant files are inside the `triton_chipyard` submodule:
+
+| Change | Source location |
+| --- | --- |
+| Declare the pass name, options, and constructor | `include/triton-shared/Conversion/LinalgToFunctionCall/Passes.td` and `Passes.h` |
+| Implement matching, validation, and rewriting | `lib/Conversion/LinalgToFunctionCall/LinalgToFunctionCallPass.cpp` |
+| Generate pass declarations and build the pass library | The `CMakeLists.txt` files in those two directories and their parent `Conversion` directories |
+| Register the pass and its required dialects | `tools/triton-chipyard-opt/RegisterTritonSharedDialects.h` |
+| Link the pass into the optimizer | `tools/triton-chipyard-opt/CMakeLists.txt` |
+| Insert it into the compilation pipeline | `backend/compiler.py` |
+| Check successful conversion and rejected or unmatched inputs | `test/Conversion/linalg-to-function-call*.mlir` |
+
+For a new pass, create corresponding include and implementation directories,
+add them to the parent CMake files, register the pass, and link its library
+into `triton-chipyard-opt`. Place the invocation where its input IR exists:
+an external call using memref descriptors belongs after bufferization and
+before lower-level code generation. Define shape, dtype, stride, and
+accumulation behavior explicitly so the rewrite and hardware kernel agree.
+
+For a source installation with the LLVM build already available, rebuild the
+Triton backend using the same LLVM configuration as the installer:
+
+```bash
+cd "$PYTORCH_CHIPYARD_ROOT/triton"
+TRITON_PLUGIN_DIRS="$PYTORCH_CHIPYARD_ROOT/triton_chipyard" \
+LLVM_INCLUDE_DIRS="$PYTORCH_CHIPYARD_ROOT/llvm-project/build/include" \
+LLVM_LIBRARY_DIR="$PYTORCH_CHIPYARD_ROOT/llvm-project/build/lib" \
+LLVM_SYSPATH="$PYTORCH_CHIPYARD_ROOT/llvm-project/build" \
+  python -m pip install --no-build-isolation -e .
+```
+
+Run the corresponding MLIR regression cases, regenerate the tutorial artifact,
+and inspect `ttshared.mlir`, `model_spec.json`, and the linked symbols. Finally,
+run it on the matching target and compare its output with eager PyTorch as in
+[Tutorials and Examples](tutorials-and-examples.md). IR replacement and a
+successful link establish that the extension is connected; target execution
+and numerical comparison validate its behavior.

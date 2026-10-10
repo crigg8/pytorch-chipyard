@@ -34,25 +34,19 @@ kernels that can later be packaged for Chipyard-based execution.
 - Replaces the installed PyTorch package's `torch/_inductor` with the custom
   `pytorch/torch/_inductor` from this repository.
 
-## Repository Scope
+## Prerequisites
 
-This repository includes only the compiler stack. It does not install chipyard or configure an FPGA host.
+This repository includes only the compiler stack. It does not install Chipyard or configure an FPGA host.
 For FPGA execution, the host must already provide the FPGA runtime environment.
+Follow the guides below to set up FireSim simulation. 
 
-External FPGA-side requirements include:
-
-- An AMD/Xilinx Alveo U250-class host for the full paper configuration. Some
-  experiments may also run on an Alveo U280 if matching bitstreams are
-  available.
-- XRT and the XDMA kernel module.
-- Vivado/Vitis-compatible tooling for the target bitstream flow.
-- FireSim database files and access to the target FPGA device.
-- Prebuilt bitstreams from the release artifacts, or bitstreams built from the
-  matching Chipyard/FireSim hardware configuration.
-
-FPGA setup and FPGA execution are outside the coverage of this documentation.
-The examples here stop at compiler-stack setup, artifact generation, and the
-commands needed to build generated RISC-V runner binaries.
+- **Chipyard:** [Initial repository setup][chipyard-setup]
+- **FireSim:** [FPGA host setup][firesim-host] ·
+  [Repository and manager setup][firesim-manager] ·
+  [U250 Vivado configuration][firesim-vivado]
+- **FireMarshal:** [Installation][firemarshal-setup] ·
+  [Quick start][firemarshal-quickstart] ·
+  [Configuration reference][firemarshal-config]
 
 ## Version Assumptions
 
@@ -65,3 +59,11 @@ This project is version-sensitive. The documented path assumes:
 - The pinned Triton submodule commits.
 
 Other commits may work, but they are outside the documented configuration.
+
+[chipyard-setup]: https://github.com/ucb-bar/chipyard/blob/dbc082e2206f787c3aba12b9b171e1704e15b707/docs/Chipyard-Basics/Initial-Repo-Setup.rst
+[firesim-host]: https://github.com/firesim/firesim/blob/141bff735c9b81a6d82a593310d0ca8be903e9a1/docs/Local-FPGA-Initial-Setup.rst
+[firesim-manager]: https://github.com/firesim/firesim/blob/141bff735c9b81a6d82a593310d0ca8be903e9a1/docs/Getting-Started-Guides/On-Premises-FPGA-Getting-Started/Repo-Setup/Xilinx-XDMA-Template.rst
+[firesim-vivado]: https://github.com/firesim/firesim/blob/141bff735c9b81a6d82a593310d0ca8be903e9a1/docs/Getting-Started-Guides/On-Premises-FPGA-Getting-Started/Building-a-FireSim-Bitstream/Xilinx-Alveo-U250.rst
+[firemarshal-setup]: https://github.com/firesim/FireMarshal/blob/21119e5ce922ff9302f0bc9d2d7349c77f7ac064/README.md#setup
+[firemarshal-quickstart]: https://github.com/firesim/FireMarshal/blob/21119e5ce922ff9302f0bc9d2d7349c77f7ac064/docs/source/Tutorials/quickstart.rst
+[firemarshal-config]: https://github.com/firesim/FireMarshal/blob/21119e5ce922ff9302f0bc9d2d7349c77f7ac064/docs/source/marshalConfig.rst

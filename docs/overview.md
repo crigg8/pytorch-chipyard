@@ -62,3 +62,21 @@ The representative work done at each stage is:
 
   These stages run after `buddy-opt` and lower the program to actual binary
   code, including register selection.
+
+## 4.3 Supported Operator Paths
+
+The model compilation path is:
+
+```text
+PyTorch model
+  -> torch.compile / TorchInductor
+  -> Triton-Chipyard backend
+  -> Chipyard runner artifact
+```
+
+It covers Inductor-generated pointwise and reduction kernels, template kernels
+for matmul, convolution, BMM, and SDPA, and the documented CNN and LLM prefill
+examples. Target selection enables Gemmini, RVV, or scalar RISC-V lowering.
+See [Tutorials and Examples](tutorials-and-examples.md) for configuration and
+validation, and [Adding New Hardware](adding-new-hardware.md) for custom Aten
+and Linalg operation integration.
