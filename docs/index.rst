@@ -4,7 +4,7 @@ PyTorch-Chipyard Documentation
 PyTorch-Chipyard is a compiler stack that lowers PyTorch models through
 TorchInductor and Triton-Chipyard into Chipyard/Gemmini execution artifacts.
 This documentation covers prerequisites and installation, tutorials, adding
-new hardware, PyTorch-Chipyard internals, and artifact evaluation.
+new hardware, and PyTorch-Chipyard internals.
 
 .. toctree::
    :maxdepth: 2
@@ -14,4 +14,3 @@ new hardware, PyTorch-Chipyard internals, and artifact evaluation.
    tutorials-and-examples
    adding-new-hardware
    overview
-   artifact-evaluation

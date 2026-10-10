@@ -8,8 +8,7 @@ This section contains two tutorials:
 Start with [Prerequisites and Installation](getting-started.md). The standalone
 matmul tutorial uses Verilator and needs no FPGA. ResNet50 compilation needs
 the compiler stack; its FireMarshal/FireSim execution steps use the separately
-configured FPGA environment. For the bounded smoke test and paper experiments,
-see [Artifact Evaluation](artifact-evaluation.md).
+configured FPGA environment.
 
 ## 2.1 Triton-Chipyard Matmul
 
